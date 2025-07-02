@@ -136,27 +136,11 @@ def main():
         if st.button("🔄 Refresh Now", type="primary"):
             st.rerun()
     
-    # Sidebar controls
-    st.sidebar.header("⚙️ Controls")
+    # Sidebar - Live NSE OI Spurts section only
+    st.sidebar.header("Live NSE OI Spurts")
     
-    # Auto-refresh toggle
-    auto_refresh = st.sidebar.checkbox("Auto Refresh (60s)", value=st.session_state.auto_refresh)
-    st.session_state.auto_refresh = auto_refresh
-    
-    # Clear history button
-    if st.sidebar.button("🗑️ Clear History"):
-        st.session_state.data_history = []
-        st.session_state.last_update = None
-        st.rerun()
-    
-    # Status section
-    st.sidebar.header("📊 Status")
-    if st.session_state.last_update:
-        st.sidebar.success(f"Last Update: {st.session_state.last_update.strftime('%H:%M:%S')}")
-    else:
-        st.sidebar.info("No data fetched yet")
-    
-    st.sidebar.info(f"Data Points: {len(st.session_state.data_history)}")
+    # Keep auto-refresh functionality but without UI control
+    auto_refresh = st.session_state.auto_refresh
     
     # Compact status area
     col1, col2 = st.columns([3, 1])
