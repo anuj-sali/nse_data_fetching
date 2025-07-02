@@ -103,9 +103,38 @@ def process_data(raw_data):
         return pd.DataFrame()
 
 def main():
-    # Title and header
-    st.title("📈 NSE OI Spurts Live Dashboard")
-    st.markdown("Real-time monitoring of Open Interest spurts from NSE India")
+    # Remove default Streamlit padding and margins
+    st.markdown("""
+    <style>
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        margin-top: 0rem;
+    }
+    header[data-testid="stHeader"] {
+        height: 0px;
+    }
+    .stApp > header {
+        background-color: transparent;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Title with inline metrics and refresh button
+    title_col1, title_col2, title_col3, title_col4 = st.columns([3, 1, 1, 1])
+    
+    with title_col1:
+        st.markdown("### 📈 NSE OI Spurts Live Dashboard")
+    
+    with title_col2:
+        symbols_placeholder = st.empty()
+    
+    with title_col3:
+        updated_placeholder = st.empty()
+    
+    with title_col4:
+        if st.button("🔄 Refresh Now", type="primary"):
+            st.rerun()
     
     # Sidebar controls
     st.sidebar.header("⚙️ Controls")
@@ -113,10 +142,6 @@ def main():
     # Auto-refresh toggle
     auto_refresh = st.sidebar.checkbox("Auto Refresh (60s)", value=st.session_state.auto_refresh)
     st.session_state.auto_refresh = auto_refresh
-    
-    # Manual refresh button
-    if st.sidebar.button("🔄 Refresh Now", type="primary"):
-        st.rerun()
     
     # Clear history button
     if st.sidebar.button("🗑️ Clear History"):
@@ -133,19 +158,16 @@ def main():
     
     st.sidebar.info(f"Data Points: {len(st.session_state.data_history)}")
     
-    # Main content area
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Compact status area
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.subheader("🔄 Live Data Feed")
-    
-    with col2:
         status_placeholder = st.empty()
     
-    with col3:
+    with col2:
         countdown_placeholder = st.empty()
     
-    # Data display area
+    # Data display area - moved up to be more prominent
     data_placeholder = st.empty()
     chart_placeholder = st.empty()
     
@@ -178,43 +200,38 @@ def main():
                     if len(st.session_state.data_history) > 10:
                         st.session_state.data_history = st.session_state.data_history[-10:]
                     
+                    # Update title row metrics
+                    if len(df) > 0:
+                        symbols_placeholder.metric("Symbols", len(df))
+                        current_time = datetime.now().strftime("%H:%M:%S")
+                        updated_placeholder.metric("Updated", current_time)
+                    
                     # Display current data
                     with data_placeholder.container():
-                        st.subheader("📋 Current Data")
-                        
-                        # Key metrics
+                        # Compact metrics in a single row
                         if len(df) > 0:
-                            col1, col2, col3, col4 = st.columns(4)
+                            col1, col2 = st.columns(2)
                             
                             with col1:
-                                st.metric("Total Symbols", len(df))
-                            
-                            with col2:
                                 if 'chngInOI' in df.columns:
                                     avg_oi_change = df['chngInOI'].mean() if pd.api.types.is_numeric_dtype(df['chngInOI']) else 0
-                                    st.metric("Avg OI Change", f"{avg_oi_change:.2f}")
+                                    st.metric("Avg OI", f"{avg_oi_change:.1f}")
                             
-                            with col3:
+                            with col2:
                                 if 'pctChngInOI' in df.columns:
                                     max_pct_change = df['pctChngInOI'].max() if pd.api.types.is_numeric_dtype(df['pctChngInOI']) else 0
-                                    st.metric("Max % Change", f"{max_pct_change:.2f}%")
-                            
-                            with col4:
-                                current_time = datetime.now().strftime("%H:%M:%S")
-                                st.metric("Last Updated", current_time)
+                                    st.metric("Max %", f"{max_pct_change:.1f}%")
                         
-                        # Data table
+                        # Main data table - larger and more prominent
                         st.dataframe(
                             df,  # Show all rows
                             use_container_width=True,
-                            height=600
+                            height=700
                         )
                     
-                    # Charts
+                    # Compact charts section
                     if len(st.session_state.data_history) > 1:
                         with chart_placeholder.container():
-                            st.subheader("📈 Trends")
-                            
                             # Create trend chart if we have numeric data
                             if 'pctChngInOI' in df.columns and pd.api.types.is_numeric_dtype(df['pctChngInOI']):
                                 # Top 10 symbols by percentage change
@@ -224,10 +241,10 @@ def main():
                                     top_symbols,
                                     x='symbol' if 'symbol' in df.columns else df.index,
                                     y='pctChngInOI',
-                                    title="Top 10 Symbols by OI % Change",
+                                    title="Top 10 OI % Changes",
                                     labels={'pctChngInOI': 'OI % Change', 'symbol': 'Symbol'}
                                 )
-                                fig.update_layout(height=400)
+                                fig.update_layout(height=300, margin=dict(t=40, b=20))
                                 st.plotly_chart(fig, use_container_width=True)
                 
                 else:
@@ -249,11 +266,10 @@ def main():
             latest_data = st.session_state.data_history[-1]['data']
             
             with data_placeholder.container():
-                st.subheader("📋 Latest Data")
                 st.dataframe(
                     latest_data,
                     use_container_width=True,
-                    height=600
+                    height=700
                 )
         else:
             data_placeholder.info("No data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
