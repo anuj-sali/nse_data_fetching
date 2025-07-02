@@ -31,6 +31,10 @@ if 'gainers_last_update' not in st.session_state:
     st.session_state.gainers_last_update = None
 if 'selected_section' not in st.session_state:
     st.session_state.selected_section = "OI Spurts"
+if 'losers_data_history' not in st.session_state:
+    st.session_state.losers_data_history = []
+if 'losers_last_update' not in st.session_state:
+    st.session_state.losers_last_update = None
 
 def fetch_nse_data():
     """Fetch data from NSE API using cloudscraper"""
@@ -135,6 +139,46 @@ def fetch_daily_gainers():
     except Exception as e:
         return None, str(e)
 
+def fetch_daily_losers():
+    """Fetch Daily Losers F&O Stocks data using cloudscraper"""
+    try:
+        scraper = cloudscraper.create_scraper()
+        
+        url = "https://scanx.dhan.co/scanx/daygnl"
+        
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "content-type": "application/json",
+            "auth": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwiZXhwIjoxNzUxMTk0MzgxLCJjbGllbnRfaWQiOiIxMTAxMDM2MTEwIn0.f5RbyEmHolU_zKAjzREcHXAnoN3O3E0Gfz8Ig4eV-4QbDDCxtRSC-oprbWrj68-pAlPRNajVir4Qob_RHWSGeQ",
+            "authorisation": "Token eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI4NjY5MTgwNTYyIiwicm9sZSI6IkFkbWluIiwiZXhwIjoxNzUxMjYzMTQwfQ._v2jjgVcral-A8l_E2LiVmnljzsmQ7jZKTdpeSQ0ZlnKmgGZpFMjVggLpVOcj2CJovG33g-6WqcK7ptRFKDbQg",
+            "origin": "https://web.dhan.co",
+            "referer": "https://web.dhan.co/",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+        }
+        
+        payload = {
+            "Data": {
+                "Seg": 1,
+                "SecIdxCode": 311,
+                "Count": 50,
+                "TypeFlag": "L",
+                "DayLevelIndicator": 1,
+                "ExpCode": -1,
+                "Instrument": "EQUITY"
+            }
+        }
+        
+        response = scraper.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data, None
+        else:
+            return None, f"HTTP Error: {response.status_code}"
+            
+    except Exception as e:
+        return None, str(e)
+
 def process_data(raw_data):
     """Process raw API data into a pandas DataFrame"""
     try:
@@ -172,6 +216,30 @@ def process_gainers_data(raw_data):
         st.error(f"Error processing gainers data: {e}")
         return pd.DataFrame()
 
+def process_losers_data(raw_data):
+    """Process Daily Losers API data into a pandas DataFrame"""
+    try:
+        if 'data' in raw_data:
+            df = pd.DataFrame(raw_data['data'])
+            df['timestamp'] = datetime.now()
+            # Rename columns for better display
+            column_mapping = {
+                'sym': 'Symbol',
+                'disp': 'Company Name',
+                'ltp': 'LTP',
+                'chng': 'Change',
+                'pchng': '% Change',
+                'tvol': 'Volume',
+                'tval': 'Turnover'
+            }
+            df = df.rename(columns=column_mapping)
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error processing losers data: {e}")
+        return pd.DataFrame()
+
 def main():
     # Remove default Streamlit padding and margins
     st.markdown("""
@@ -196,8 +264,10 @@ def main():
     with title_col1:
         if st.session_state.selected_section == "OI Spurts":
             st.markdown("### 📈 NSE OI Spurts Live Dashboard")
-        else:
+        elif st.session_state.selected_section == "Daily Gainers":
             st.markdown("### 🚀 Daily Gainers F&O Stocks Dashboard")
+        else:
+            st.markdown("### 📉 Daily Losers F&O Stocks Dashboard")
     
     with title_col2:
         symbols_placeholder = st.empty()
@@ -210,8 +280,10 @@ def main():
             # Clear the appropriate data history to force refresh
             if st.session_state.selected_section == "OI Spurts":
                 st.session_state.data_history = []
-            else:
+            elif st.session_state.selected_section == "Daily Gainers":
                 st.session_state.gainers_data_history = []
+            else:
+                st.session_state.losers_data_history = []
             st.rerun()
     
     # Sidebar - Section selection
@@ -224,6 +296,10 @@ def main():
     
     if st.sidebar.button("🚀 DAILY GAINERS F&O STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Daily Gainers" else "secondary"):
         st.session_state.selected_section = "Daily Gainers"
+        st.rerun()
+    
+    if st.sidebar.button("📉 DAILY LOSERS F&O STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Daily Losers" else "secondary"):
+        st.session_state.selected_section = "Daily Losers"
         st.rerun()
     
     st.sidebar.markdown("---")
@@ -394,6 +470,75 @@ def main():
                     else:
                         st.warning("No gainers data available in the response")
         
+        elif st.session_state.selected_section == "Daily Losers":
+            # Fetch Daily Losers data
+            with status_placeholder:
+                with st.spinner("Fetching Daily Losers data..."):
+                    data, error = fetch_daily_losers()
+            
+            if error:
+                st.error(f"Error fetching losers data: {error}")
+                status_placeholder.error("❌ Failed")
+            else:
+                status_placeholder.success("✅ Success")
+                st.session_state.losers_last_update = datetime.now()
+                
+                # Process and display data
+                if data:
+                    df = process_losers_data(data)
+                    
+                    if not df.empty:
+                        # Store in history
+                        st.session_state.losers_data_history.append({
+                            'timestamp': datetime.now(),
+                            'data': df
+                        })
+                        
+                        # Keep only last 10 data points
+                        if len(st.session_state.losers_data_history) > 10:
+                            st.session_state.losers_data_history = st.session_state.losers_data_history[-10:]
+                        
+                        # Update title row metrics
+                        if len(df) > 0:
+                            symbols_placeholder.metric("Losers", len(df))
+                            current_time = datetime.now().strftime("%H:%M:%S")
+                            updated_placeholder.metric("Updated", current_time)
+                        
+                        # Display current data
+                        with data_placeholder.container():
+                            # Main data table - larger and more prominent
+                            display_columns = ['Symbol', 'Company Name', 'LTP', 'Change', '% Change', 'Volume']
+                            available_columns = [col for col in display_columns if col in df.columns]
+                            
+                            st.dataframe(
+                                df[available_columns] if available_columns else df,
+                                use_container_width=True,
+                                height=700
+                            )
+                        
+                        # Compact charts section
+                        if len(st.session_state.losers_data_history) > 1:
+                            with chart_placeholder.container():
+                                # Create trend chart if we have numeric data
+                                if '% Change' in df.columns and pd.api.types.is_numeric_dtype(df['% Change']):
+                                    # Top 10 losers by percentage change (most negative)
+                                    top_losers = df.nsmallest(10, '% Change')
+                                    
+                                    fig = px.bar(
+                                        top_losers,
+                                        x='Symbol',
+                                        y='% Change',
+                                        title="Top 10 Daily Losers",
+                                        labels={'% Change': '% Change', 'Symbol': 'Symbol'},
+                                        color='% Change',
+                                        color_continuous_scale='Reds'
+                                    )
+                                    fig.update_layout(height=300, margin=dict(t=40, b=20))
+                                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    else:
+                        st.warning("No losers data available in the response")
+        
         # Countdown for next refresh
         if auto_refresh:
             for i in range(60, 0, -1):
@@ -449,6 +594,30 @@ def main():
                     )
             else:
                 data_placeholder.info("No Daily Gainers data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
+        
+        elif st.session_state.selected_section == "Daily Losers":
+            if st.session_state.losers_data_history:
+                latest_data = st.session_state.losers_data_history[-1]['data']
+                
+                # Update title row metrics
+                if len(latest_data) > 0:
+                    symbols_placeholder.metric("Losers", len(latest_data))
+                    if st.session_state.losers_last_update:
+                        updated_time = st.session_state.losers_last_update.strftime("%H:%M:%S")
+                        updated_placeholder.metric("Updated", updated_time)
+                
+                with data_placeholder.container():
+                    # Display losers data with selected columns
+                    display_columns = ['Symbol', 'Company Name', 'LTP', 'Change', '% Change', 'Volume']
+                    available_columns = [col for col in display_columns if col in latest_data.columns]
+                    
+                    st.dataframe(
+                        latest_data[available_columns] if available_columns else latest_data,
+                        use_container_width=True,
+                        height=700
+                    )
+            else:
+                data_placeholder.info("No Daily Losers data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
 
 if __name__ == "__main__":
     main()
