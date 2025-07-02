@@ -35,6 +35,10 @@ if 'losers_data_history' not in st.session_state:
     st.session_state.losers_data_history = []
 if 'losers_last_update' not in st.session_state:
     st.session_state.losers_last_update = None
+if 'shortlisted_data_history' not in st.session_state:
+    st.session_state.shortlisted_data_history = []
+if 'shortlisted_last_update' not in st.session_state:
+    st.session_state.shortlisted_last_update = None
 
 def fetch_nse_data():
     """Fetch data from NSE API using cloudscraper"""
@@ -240,6 +244,91 @@ def process_losers_data(raw_data):
         st.error(f"Error processing losers data: {e}")
         return pd.DataFrame()
 
+def process_shortlisted_stocks():
+    """Process and combine data for shortlisted stocks based on criteria"""
+    try:
+        shortlisted_stocks = []
+        
+        # Fetch all three data sources
+        gainers_data, gainers_error = fetch_daily_gainers()
+        losers_data, losers_error = fetch_daily_losers()
+        oi_data, oi_error = fetch_nse_data()
+        
+        if gainers_error or losers_error or oi_error:
+            return pd.DataFrame(), f"Error fetching data: {gainers_error or losers_error or oi_error}"
+        
+        # Process OI data
+        oi_df = process_data(oi_data) if oi_data else pd.DataFrame()
+        
+        # Process gainers (>= 2% change)
+        if gainers_data:
+            gainers_df = process_gainers_data(gainers_data)
+            if not gainers_df.empty and '% Change' in gainers_df.columns:
+                filtered_gainers = gainers_df[gainers_df['% Change'] >= 2.0].copy()
+                filtered_gainers['Movement Type'] = 'Gainer'
+                
+                # Match with OI data
+                if not oi_df.empty and 'symbol' in oi_df.columns:
+                    for _, gainer in filtered_gainers.iterrows():
+                        symbol = gainer['Symbol']
+                        oi_match = oi_df[oi_df['symbol'] == symbol]
+                        if not oi_match.empty:
+                            oi_row = oi_match.iloc[0]
+                            if 'avgInOI' in oi_row and pd.notna(oi_row['avgInOI']) and oi_row['avgInOI'] > 7:
+                                combined_row = {
+                                    'Symbol': symbol,
+                                    'Company Name': gainer['Company Name'],
+                                    'LTP': gainer['LTP'],
+                                    'Change': gainer['Change'],
+                                    '% Change': gainer['% Change'],
+                                    'Volume': gainer['Volume'],
+                                    'Movement Type': 'Gainer',
+                                    'avgInOI': oi_row['avgInOI'],
+                                    'chngInOI': oi_row.get('chngInOI', 0),
+                                    'pctChngInOI': oi_row.get('pctChngInOI', 0)
+                                }
+                                shortlisted_stocks.append(combined_row)
+        
+        # Process losers (<= -2% change)
+        if losers_data:
+            losers_df = process_losers_data(losers_data)
+            if not losers_df.empty and '% Change' in losers_df.columns:
+                filtered_losers = losers_df[losers_df['% Change'] <= -2.0].copy()
+                filtered_losers['Movement Type'] = 'Loser'
+                
+                # Match with OI data
+                if not oi_df.empty and 'symbol' in oi_df.columns:
+                    for _, loser in filtered_losers.iterrows():
+                        symbol = loser['Symbol']
+                        oi_match = oi_df[oi_df['symbol'] == symbol]
+                        if not oi_match.empty:
+                            oi_row = oi_match.iloc[0]
+                            if 'avgInOI' in oi_row and pd.notna(oi_row['avgInOI']) and oi_row['avgInOI'] > 7:
+                                combined_row = {
+                                    'Symbol': symbol,
+                                    'Company Name': loser['Company Name'],
+                                    'LTP': loser['LTP'],
+                                    'Change': loser['Change'],
+                                    '% Change': loser['% Change'],
+                                    'Volume': loser['Volume'],
+                                    'Movement Type': 'Loser',
+                                    'avgInOI': oi_row['avgInOI'],
+                                    'chngInOI': oi_row.get('chngInOI', 0),
+                                    'pctChngInOI': oi_row.get('pctChngInOI', 0)
+                                }
+                                shortlisted_stocks.append(combined_row)
+        
+        # Create final DataFrame
+        if shortlisted_stocks:
+            df = pd.DataFrame(shortlisted_stocks)
+            df['timestamp'] = datetime.now()
+            return df, None
+        else:
+            return pd.DataFrame(), None
+            
+    except Exception as e:
+        return pd.DataFrame(), str(e)
+
 def main():
     # Remove default Streamlit padding and margins
     st.markdown("""
@@ -266,8 +355,10 @@ def main():
             st.markdown("### 📈 NSE OI Spurts Live Dashboard")
         elif st.session_state.selected_section == "Daily Gainers":
             st.markdown("### 🚀 Daily Gainers F&O Stocks Dashboard")
-        else:
+        elif st.session_state.selected_section == "Daily Losers":
             st.markdown("### 📉 Daily Losers F&O Stocks Dashboard")
+        else:
+            st.markdown("### ⭐ Shortlisted Stocks Dashboard")
     
     with title_col2:
         symbols_placeholder = st.empty()
@@ -282,8 +373,10 @@ def main():
                 st.session_state.data_history = []
             elif st.session_state.selected_section == "Daily Gainers":
                 st.session_state.gainers_data_history = []
-            else:
+            elif st.session_state.selected_section == "Daily Losers":
                 st.session_state.losers_data_history = []
+            else:
+                st.session_state.shortlisted_data_history = []
             st.rerun()
     
     # Sidebar - Section selection
@@ -300,6 +393,10 @@ def main():
     
     if st.sidebar.button("📉 DAILY LOSERS F&O STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Daily Losers" else "secondary"):
         st.session_state.selected_section = "Daily Losers"
+        st.rerun()
+    
+    if st.sidebar.button("⭐ SHORTLISTED STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Shortlisted Stocks" else "secondary"):
+        st.session_state.selected_section = "Shortlisted Stocks"
         st.rerun()
     
     st.sidebar.markdown("---")
@@ -539,6 +636,99 @@ def main():
                     else:
                         st.warning("No losers data available in the response")
         
+        else:  # Shortlisted Stocks section
+            # Fetch Shortlisted Stocks data
+            with status_placeholder:
+                with st.spinner("Processing Shortlisted Stocks data..."):
+                    df, error = process_shortlisted_stocks()
+            
+            if error:
+                st.error(f"Error processing shortlisted stocks: {error}")
+                status_placeholder.error("❌ Failed")
+            else:
+                status_placeholder.success("✅ Success")
+                st.session_state.shortlisted_last_update = datetime.now()
+                
+                # Process and display data
+                if not df.empty:
+                    # Store in history
+                    st.session_state.shortlisted_data_history.append({
+                        'timestamp': datetime.now(),
+                        'data': df
+                    })
+                    
+                    # Keep only last 10 data points
+                    if len(st.session_state.shortlisted_data_history) > 10:
+                        st.session_state.shortlisted_data_history = st.session_state.shortlisted_data_history[-10:]
+                    
+                    # Update title row metrics
+                    symbols_placeholder.metric("Shortlisted", len(df))
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    updated_placeholder.metric("Updated", current_time)
+                    
+                    # Display current data with enhanced metrics
+                    with data_placeholder.container():
+                        # Enhanced metrics for shortlisted stocks
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            gainers_count = len(df[df['Movement Type'] == 'Gainer'])
+                            st.metric("Gainers", gainers_count)
+                        
+                        with col2:
+                            losers_count = len(df[df['Movement Type'] == 'Loser'])
+                            st.metric("Losers", losers_count)
+                        
+                        with col3:
+                            avg_oi = df['avgInOI'].mean() if 'avgInOI' in df.columns else 0
+                            st.metric("Avg OI", f"{avg_oi:.1f}")
+                        
+                        with col4:
+                            avg_change = abs(df['% Change']).mean() if '% Change' in df.columns else 0
+                            st.metric("Avg % Change", f"{avg_change:.1f}%")
+                        
+                        # Main data table with color coding
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                            height=700
+                        )
+                    
+                    # Enhanced charts section
+                    with chart_placeholder.container():
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Scatter plot: % Change vs avgInOI
+                            fig_scatter = px.scatter(
+                                df,
+                                x='% Change',
+                                y='avgInOI',
+                                color='Movement Type',
+                                title="% Change vs Average OI",
+                                hover_data=['Symbol', 'Company Name'],
+                                color_discrete_map={'Gainer': 'green', 'Loser': 'red'}
+                            )
+                            fig_scatter.update_layout(height=400)
+                            st.plotly_chart(fig_scatter, use_container_width=True)
+                        
+                        with col2:
+                            # Bar chart: Top stocks by avgInOI
+                            top_oi = df.nlargest(10, 'avgInOI')
+                            fig_bar = px.bar(
+                                top_oi,
+                                x='Symbol',
+                                y='avgInOI',
+                                color='Movement Type',
+                                title="Top 10 by Average OI",
+                                color_discrete_map={'Gainer': 'green', 'Loser': 'red'}
+                            )
+                            fig_bar.update_layout(height=400)
+                            st.plotly_chart(fig_bar, use_container_width=True)
+                
+                else:
+                    st.info("No stocks meet the shortlisting criteria (>2% movement + avgInOI >7)")
+        
         # Countdown for next refresh
         if auto_refresh:
             for i in range(60, 0, -1):
@@ -618,6 +808,79 @@ def main():
                     )
             else:
                 data_placeholder.info("No Daily Losers data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
+        
+        else:  # Shortlisted Stocks section
+            if st.session_state.shortlisted_data_history:
+                latest_data = st.session_state.shortlisted_data_history[-1]['data']
+                
+                # Update title row metrics
+                if len(latest_data) > 0:
+                    symbols_placeholder.metric("Shortlisted", len(latest_data))
+                    if st.session_state.shortlisted_last_update:
+                        updated_time = st.session_state.shortlisted_last_update.strftime("%H:%M:%S")
+                        updated_placeholder.metric("Updated", updated_time)
+                
+                # Display current data with enhanced metrics
+                with data_placeholder.container():
+                    # Enhanced metrics for shortlisted stocks
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        gainers_count = len(latest_data[latest_data['Movement Type'] == 'Gainer'])
+                        st.metric("Gainers", gainers_count)
+                    
+                    with col2:
+                        losers_count = len(latest_data[latest_data['Movement Type'] == 'Loser'])
+                        st.metric("Losers", losers_count)
+                    
+                    with col3:
+                        avg_oi = latest_data['avgInOI'].mean() if 'avgInOI' in latest_data.columns else 0
+                        st.metric("Avg OI", f"{avg_oi:.1f}")
+                    
+                    with col4:
+                        avg_change = abs(latest_data['% Change']).mean() if '% Change' in latest_data.columns else 0
+                        st.metric("Avg % Change", f"{avg_change:.1f}%")
+                    
+                    # Main data table
+                    st.dataframe(
+                        latest_data,
+                        use_container_width=True,
+                        height=700
+                    )
+                
+                # Enhanced charts section
+                with chart_placeholder.container():
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Scatter plot: % Change vs avgInOI
+                        fig_scatter = px.scatter(
+                            latest_data,
+                            x='% Change',
+                            y='avgInOI',
+                            color='Movement Type',
+                            title="% Change vs Average OI",
+                            hover_data=['Symbol', 'Company Name'],
+                            color_discrete_map={'Gainer': 'green', 'Loser': 'red'}
+                        )
+                        fig_scatter.update_layout(height=400)
+                        st.plotly_chart(fig_scatter, use_container_width=True)
+                    
+                    with col2:
+                        # Bar chart: Top stocks by avgInOI
+                        top_oi = latest_data.nlargest(10, 'avgInOI')
+                        fig_bar = px.bar(
+                            top_oi,
+                            x='Symbol',
+                            y='avgInOI',
+                            color='Movement Type',
+                            title="Top 10 by Average OI",
+                            color_discrete_map={'Gainer': 'green', 'Loser': 'red'}
+                        )
+                        fig_bar.update_layout(height=400)
+                        st.plotly_chart(fig_bar, use_container_width=True)
+            else:
+                data_placeholder.info("No Shortlisted Stocks data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
 
 if __name__ == "__main__":
     main()
