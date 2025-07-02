@@ -445,7 +445,10 @@ def main():
         with col_session:
             if st.button("🔄 Session", help="Refresh NSE session", use_container_width=True):
                 refresh_nse_session()
-                st.success("Session refreshed!")
+                success_placeholder = st.empty()
+                success_placeholder.success("Session refreshed!")
+                time.sleep(2)
+                success_placeholder.empty()
                 st.rerun()
     
     # Sidebar - Section selection
@@ -493,9 +496,15 @@ def main():
             with st.spinner("Refreshing session..."):
                 scraper, error = refresh_nse_session()
                 if error:
-                    st.error(f"Failed: {error}")
+                    error_placeholder = st.empty()
+                    error_placeholder.error(f"Failed: {error}")
+                    time.sleep(3)
+                    error_placeholder.empty()
                 else:
-                    st.success("Session refreshed!")
+                    success_placeholder = st.empty()
+                    success_placeholder.success("Session refreshed!")
+                    time.sleep(2)
+                    success_placeholder.empty()
         st.rerun()
     
     # Keep auto-refresh functionality but without UI control
