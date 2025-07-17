@@ -6,9 +6,14 @@ import io
 import json
 import pandas as pd
 import time
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Page configuration
 st.set_page_config(
@@ -17,6 +22,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+def load_futstk_mapping():
+    """Load the futstk mapping JSON file"""
+    try:
+        with open('futstk_mapping.json', 'r') as f:
+            mapping = json.load(f)
+        return mapping
+    except Exception as e:
+        st.error(f"Error loading futstk mapping: {e}")
+        return {}
 
 # Initialize session state
 if 'data_history' not in st.session_state:
@@ -39,6 +54,18 @@ if 'shortlisted_data_history' not in st.session_state:
     st.session_state.shortlisted_data_history = []
 if 'shortlisted_last_update' not in st.session_state:
     st.session_state.shortlisted_last_update = None
+if 'oi_trend_data_history' not in st.session_state:
+    st.session_state.oi_trend_data_history = []
+if 'oi_trend_last_update' not in st.session_state:
+    st.session_state.oi_trend_last_update = None
+if 'selected_stock_symbol' not in st.session_state:
+    st.session_state.selected_stock_symbol = None
+if 'buildup_data' not in st.session_state:
+    st.session_state.buildup_data = None
+if 'futstk_mapping' not in st.session_state:
+    st.session_state.futstk_mapping = load_futstk_mapping()
+if 'show_stock_detail_page' not in st.session_state:
+    st.session_state.show_stock_detail_page = False
 # Session management for scrapers
 if 'nse_scraper' not in st.session_state:
     st.session_state.nse_scraper = None
@@ -61,7 +88,7 @@ def create_nse_session():
         )
         
         # Visit the main page to establish session
-        main_page_url = "https://www.nseindia.com/market-data/oi-spurts"
+        main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
         main_response = scraper.get(main_page_url, timeout=30)
         
         if main_response.status_code == 200:
@@ -81,6 +108,42 @@ def refresh_nse_session():
     st.session_state.nse_session_established = False
     st.session_state.session_creation_time = None
     return create_nse_session()
+
+def create_buildup_session():
+    """Create a new Buildup OI API session with cloudscraper"""
+    try:
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            },
+            delay=1,
+            debug=False
+        )
+        
+        # Visit the main Dhan options trader page to establish session
+        main_page_url = os.getenv('DHAN_OPTIONS_TRADER_URL', 'https://options-trader.dhan.co/')
+        main_response = scraper.get(main_page_url, timeout=30)
+        
+        if main_response.status_code == 200:
+            st.session_state.buildup_scraper = scraper
+            st.session_state.buildup_session_established = True
+            st.session_state.buildup_session_creation_time = datetime.now()
+            return scraper, None
+        else:
+            return None, f"Failed to establish buildup session: {main_response.status_code}"
+            
+    except Exception as e:
+        return None, f"Buildup session creation failed: {str(e)}"
+
+def refresh_buildup_session():
+    """Refresh the Buildup OI API session"""
+    st.session_state.buildup_scraper = None
+    st.session_state.buildup_session_established = False
+    st.session_state.buildup_session_creation_time = None
+    st.session_state.buildup_data = None  # Clear cached data
+    return create_buildup_session()
 
 def fetch_nse_data():
     """Fetch data from NSE API using cloudscraper with dynamic session management"""
@@ -104,7 +167,7 @@ def fetch_nse_data():
             scraper = st.session_state.nse_scraper
         
         # API endpoint
-        api_url = "https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings"
+        api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
         
         # Use minimal headers
         headers = {
@@ -168,16 +231,16 @@ def fetch_daily_gainers():
     try:
         scraper = cloudscraper.create_scraper()
         
-        url = "https://scanx.dhan.co/scanx/daygnl"
+        url = os.getenv('DHAN_DAILY_API_URL', 'https://scanx.dhan.co/scanx/daygnl')
         
         headers = {
             "accept": "application/json, text/plain, */*",
             "content-type": "application/json",
-            "auth": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwiZXhwIjoxNzUxMTk0MzgxLCJjbGllbnRfaWQiOiIxMTAxMDM2MTEwIn0.f5RbyEmHolU_zKAjzREcHXAnoN3O3E0Gfz8Ig4eV-4QbDDCxtRSC-oprbWrj68-pAlPRNajVir4Qob_RHWSGeQ",
-            "authorisation": "Token eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI4NjY5MTgwNTYyIiwicm9sZSI6IkFkbWluIiwiZXhwIjoxNzUxMjYzMTQwfQ._v2jjgVcral-A8l_E2LiVmnljzsmQ7jZKTdpeSQ0ZlnKmgGZpFMjVggLpVOcj2CJovG33g-6WqcK7ptRFKDbQg",
+            "auth": os.getenv('DHAN_DAILY_AUTH_TOKEN'),
+            "authorisation": os.getenv('DHAN_DAILY_AUTHORIZATION_TOKEN'),
             "origin": "https://web.dhan.co",
             "referer": "https://web.dhan.co/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+            "user-agent": os.getenv('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         }
         
         payload = {
@@ -208,16 +271,16 @@ def fetch_daily_losers():
     try:
         scraper = cloudscraper.create_scraper()
         
-        url = "https://scanx.dhan.co/scanx/daygnl"
+        url = os.getenv('DHAN_DAILY_API_URL', 'https://scanx.dhan.co/scanx/daygnl')
         
         headers = {
             "accept": "application/json, text/plain, */*",
             "content-type": "application/json",
-            "auth": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwiZXhwIjoxNzUxMTk0MzgxLCJjbGllbnRfaWQiOiIxMTAxMDM2MTEwIn0.f5RbyEmHolU_zKAjzREcHXAnoN3O3E0Gfz8Ig4eV-4QbDDCxtRSC-oprbWrj68-pAlPRNajVir4Qob_RHWSGeQ",
-            "authorisation": "Token eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI4NjY5MTgwNTYyIiwicm9sZSI6IkFkbWluIiwiZXhwIjoxNzUxMjYzMTQwfQ._v2jjgVcral-A8l_E2LiVmnljzsmQ7jZKTdpeSQ0ZlnKmgGZpFMjVggLpVOcj2CJovG33g-6WqcK7ptRFKDbQg",
+            "auth": os.getenv('DHAN_DAILY_AUTH_TOKEN'),
+            "authorisation": os.getenv('DHAN_DAILY_AUTHORIZATION_TOKEN'),
             "origin": "https://web.dhan.co",
             "referer": "https://web.dhan.co/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+            "user-agent": os.getenv('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         }
         
         payload = {
@@ -302,6 +365,157 @@ def process_losers_data(raw_data):
             return pd.DataFrame()
     except Exception as e:
         st.error(f"Error processing losers data: {e}")
+        return pd.DataFrame()
+
+
+
+def get_secid_for_symbol(symbol, mapping):
+    """Get secid for a symbol from July 2025 futures mapping"""
+    try:
+        # Look for July 2025 futures mapping
+        key = f"{symbol}-Jul2025-FUT"
+        if key in mapping:
+            secid = mapping[key]
+            # Debug logging for RBLBANK specifically
+            if symbol == "RBLBANK":
+                st.info(f"✅ Found mapping for {symbol}: {key} -> secid: {secid}")
+            return secid
+        else:
+            # Debug logging when mapping not found
+            if symbol == "RBLBANK":
+                st.warning(f"❌ No mapping found for {key} in futstk_mapping.json")
+                st.write(f"Available keys containing '{symbol}': {[k for k in mapping.keys() if symbol in k]}")
+            return None
+    except Exception as e:
+        st.error(f"Error getting secid for {symbol}: {e}")
+        return None
+
+def fetch_buildup_data(secid):
+    """Fetch buildup data for a specific secid using the provided API"""
+    try:
+        # Debug logging for RBLBANK secid specifically
+        if secid == "53427":
+            st.info(f"🔍 Fetching buildup data for RBLBANK with secid: {secid}")
+        
+        # Use existing buildup session or create new one
+        if not st.session_state.get('buildup_session_established', False) or st.session_state.get('buildup_scraper') is None:
+            scraper, error = create_buildup_session()
+            if error:
+                return None, f"Failed to create buildup session: {error}"
+        else:
+            scraper = st.session_state.buildup_scraper
+            
+            # Check if session is older than 30 minutes and refresh if needed
+            if st.session_state.get('buildup_session_creation_time'):
+                session_age = datetime.now() - st.session_state.buildup_session_creation_time
+                if session_age.total_seconds() > 1800:  # 30 minutes
+                    scraper, error = refresh_buildup_session()
+                    if error:
+                        return None, f"Failed to refresh buildup session: {error}"
+        
+        url = os.getenv('DHAN_BUILDUP_API_URL', 'https://ticks.dhan.co/builtup')
+        
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "en-US,en;q=0.9",
+            "access-control-allow-origin": "true",
+            "auth": os.getenv('DHAN_BUILDUP_AUTH_TOKEN'),
+            "connection": "keep-alive",
+            "content-type": "application/json",
+            "host": "ticks.dhan.co",
+            "origin": "https://options-trader.dhan.co",
+            "referer": "https://options-trader.dhan.co/",
+            "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "src": "Y",
+            "user-agent": os.getenv('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        }
+        
+        payload = {
+            "Data": {
+                "exch": "NSE",
+                "seg": "D",
+                "inst": "FUTSTK",
+                "timeinterval": "15",
+                "secid": int(secid)
+            }
+        }
+        
+        response = scraper.post(url, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            raw_data = response_data.get("data", [])
+            
+            # Debug information
+            if not raw_data:
+                # Check if the response has any useful information
+                if "message" in response_data:
+                    return None, f"API Message: {response_data['message']}"
+                elif "error" in response_data:
+                    return None, f"API Error: {response_data['error']}"
+                else:
+                    return None, f"No buildup data available from API for secid {secid}. Response: {response_data}"
+            
+            return raw_data, None
+        else:
+            return None, f"HTTP Error: {response.status_code} - {response.text}"
+            
+    except Exception as e:
+        return None, str(e)
+
+def format_buildup_data(raw_data):
+    """Format buildup data into a readable DataFrame"""
+    try:
+        def format_time(ts):
+            return (datetime.utcfromtimestamp(ts) + timedelta(hours=5, minutes=30)).strftime('%H:%M')
+        
+        df = pd.DataFrame([
+            {
+                "Interval": f"{format_time(row['st'])} - {format_time(row['et'])}",
+                "Trading Zone": {
+                    "LB": "Long Buildup",
+                    "SB": "Short Buildup",
+                    "LU": "Long Unwinding",
+                    "SC": "Short Covering"
+                }.get(row["btc"], row["btc"]),
+                "Price Range": f"{row['l']:.2f} - {row['h']:.2f}",
+                "Open Interest (OI)": f"{row['toi']:,}",
+                "OI Change (%)": f"{row['oipch']:.2f}%",
+                "Fresh": f"{row['fr']:,}.00",
+                "Square-Off": f"{row['sqf']:,}.00",
+                "Traded Contracts": f"{row['vol']:,}"
+            }
+            for row in raw_data
+        ])
+        
+        return df
+    except Exception as e:
+        st.error(f"Error formatting buildup data: {e}")
+        return pd.DataFrame()
+
+def process_oi_trend_data(raw_data):
+    """Process NSE OI data and filter for avgInOI > 2%"""
+    try:
+        if 'data' in raw_data:
+            df = pd.DataFrame(raw_data['data'])
+            df['timestamp'] = datetime.now()
+            
+            # Filter for avgInOI > 2%
+            if 'avgInOI' in df.columns:
+                filtered_df = df[df['avgInOI'] > 2.0].copy()
+                return filtered_df
+            else:
+                return pd.DataFrame()
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error processing OI trend data: {e}")
         return pd.DataFrame()
 
 def process_shortlisted_stocks():
@@ -389,7 +603,149 @@ def process_shortlisted_stocks():
     except Exception as e:
         return pd.DataFrame(), str(e)
 
+def show_stock_detail_page():
+    """Show detailed tabular data for the selected stock"""
+    st.title(f"📊 Stock Details: {st.session_state.selected_stock_symbol}")
+    
+    # Back button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if st.button("← Back to OI Trend", type="primary"):
+            st.session_state.show_stock_detail_page = False
+            st.session_state.selected_stock_symbol = None
+            st.session_state.buildup_data = None
+            st.rerun()
+    
+    with col2:
+        st.markdown(f"### Buildup Data for **{st.session_state.selected_stock_symbol}**")
+    
+    with col3:
+        # Create two columns for the buttons
+        btn_col1, btn_col2 = st.columns(2)
+        
+        with btn_col1:
+            if st.button("🔄 Refresh Data", type="secondary", use_container_width=True):
+                # Refresh the buildup data
+                secid = get_secid_for_symbol(st.session_state.selected_stock_symbol, st.session_state.futstk_mapping)
+                if secid:
+                    with st.spinner(f"Refreshing buildup data for {st.session_state.selected_stock_symbol}..."):
+                        buildup_raw, error = fetch_buildup_data(secid)
+                        if error:
+                            st.error(f"Error fetching buildup data: {error}")
+                            st.session_state.buildup_data = None
+                        else:
+                            formatted_data = format_buildup_data(buildup_raw)
+                            st.session_state.buildup_data = formatted_data
+                    st.rerun()
+        
+        with btn_col2:
+            if st.button("🔄 Session", type="secondary", use_container_width=True, help="Refresh session for Buildup OI data API"):
+                # Refresh the buildup session properly
+                with st.spinner("Refreshing session for Buildup OI data API..."):
+                    scraper, error = refresh_buildup_session()
+                    if error:
+                        st.error(f"Failed to refresh buildup session: {error}")
+                    else:
+                        success_placeholder = st.empty()
+                        success_placeholder.success("✅ Buildup OI API session refreshed successfully!")
+                        time.sleep(2)
+                        success_placeholder.empty()
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # Display the buildup data
+    if st.session_state.buildup_data is not None:
+        if not st.session_state.buildup_data.empty:
+            # Show summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_intervals = len(st.session_state.buildup_data)
+                st.metric("Total Intervals", total_intervals)
+            
+            with col2:
+                if 'OI Change' in st.session_state.buildup_data.columns:
+                    avg_oi_change = st.session_state.buildup_data['OI Change'].mean()
+                    st.metric("Avg OI Change", f"{avg_oi_change:.0f}")
+            
+            with col3:
+                if 'Volume' in st.session_state.buildup_data.columns:
+                    total_volume = st.session_state.buildup_data['Volume'].sum()
+                    st.metric("Total Volume", f"{total_volume:.0f}")
+            
+            with col4:
+                if 'Price Change' in st.session_state.buildup_data.columns:
+                    avg_price_change = st.session_state.buildup_data['Price Change'].mean()
+                    st.metric("Avg Price Change", f"{avg_price_change:.2f}")
+            
+            st.markdown("### 📈 Detailed Buildup Data")
+            
+            # Display the full table with enhanced formatting
+            st.dataframe(
+                st.session_state.buildup_data,
+                use_container_width=True,
+                height=600
+            )
+            
+            # Add charts if data is available
+            if len(st.session_state.buildup_data) > 1:
+                st.markdown("### 📊 Visual Analysis")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if 'OI Change' in st.session_state.buildup_data.columns:
+                        fig_oi = px.line(
+                            st.session_state.buildup_data,
+                            x='Interval',
+                            y='OI Change',
+                            title="OI Change Over Time",
+                            markers=True
+                        )
+                        fig_oi.update_layout(height=400)
+                        st.plotly_chart(fig_oi, use_container_width=True)
+                
+                with col2:
+                    if 'Volume' in st.session_state.buildup_data.columns:
+                        fig_vol = px.bar(
+                            st.session_state.buildup_data,
+                            x='Interval',
+                            y='Volume',
+                            title="Volume Distribution"
+                        )
+                        fig_vol.update_layout(height=400)
+                        st.plotly_chart(fig_vol, use_container_width=True)
+        else:
+            st.warning(f"No buildup data available for {st.session_state.selected_stock_symbol}")
+            st.info("This could be due to:")
+            st.markdown("""
+            - No trading activity in the recent intervals
+            - Data not available for this symbol
+            - API limitations or temporary issues
+            """)
+    else:
+        st.info(f"Loading buildup data for {st.session_state.selected_stock_symbol}...")
+        # Auto-fetch data if not available
+        secid = get_secid_for_symbol(st.session_state.selected_stock_symbol, st.session_state.futstk_mapping)
+        if secid:
+            with st.spinner(f"Fetching buildup data for {st.session_state.selected_stock_symbol}..."):
+                buildup_raw, error = fetch_buildup_data(secid)
+                if error:
+                    st.error(f"Error fetching buildup data: {error}")
+                    st.session_state.buildup_data = None
+                else:
+                    formatted_data = format_buildup_data(buildup_raw)
+                    st.session_state.buildup_data = formatted_data
+            st.rerun()
+        else:
+            st.error(f"No secid found for {st.session_state.selected_stock_symbol} in July 2025 futures")
+
 def main():
+    # Check if we should show stock detail page
+    if st.session_state.show_stock_detail_page and st.session_state.selected_stock_symbol:
+        show_stock_detail_page()
+        return
     # Remove default Streamlit padding and margins
     st.markdown("""
     <style>
@@ -417,6 +773,8 @@ def main():
             st.markdown("### 🚀 Daily Gainers F&O Stocks Dashboard")
         elif st.session_state.selected_section == "Daily Losers":
             st.markdown("### 📉 Daily Losers F&O Stocks Dashboard")
+        elif st.session_state.selected_section == "OI Trend":
+            st.markdown("### 📊 OI TREND - Live NSE OI Spurts (avgInOI > 2%)")
         else:
             st.markdown("### ⭐ Shortlisted Stocks Dashboard")
     
@@ -438,6 +796,8 @@ def main():
                     st.session_state.gainers_data_history = []
                 elif st.session_state.selected_section == "Daily Losers":
                     st.session_state.losers_data_history = []
+                elif st.session_state.selected_section == "OI Trend":
+                    st.session_state.oi_trend_data_history = []
                 else:
                     st.session_state.shortlisted_data_history = []
                 st.rerun()
@@ -447,7 +807,7 @@ def main():
                 refresh_nse_session()
                 success_placeholder = st.empty()
                 success_placeholder.success("Session refreshed!")
-                time.sleep(2)
+                time.sleep(1)
                 success_placeholder.empty()
                 st.rerun()
     
@@ -465,6 +825,10 @@ def main():
     
     if st.sidebar.button("📉 DAILY LOSERS F&O STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Daily Losers" else "secondary"):
         st.session_state.selected_section = "Daily Losers"
+        st.rerun()
+    
+    if st.sidebar.button("📊 OI TREND", use_container_width=True, type="primary" if st.session_state.selected_section == "OI Trend" else "secondary"):
+        st.session_state.selected_section = "OI Trend"
         st.rerun()
     
     if st.sidebar.button("⭐ SHORTLISTED STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Shortlisted Stocks" else "secondary"):
@@ -503,7 +867,7 @@ def main():
                 else:
                     success_placeholder = st.empty()
                     success_placeholder.success("Session refreshed!")
-                    time.sleep(2)
+                    time.sleep(1)
                     success_placeholder.empty()
         st.rerun()
     
@@ -741,6 +1105,100 @@ def main():
                     else:
                         st.warning("No losers data available in the response")
         
+        elif st.session_state.selected_section == "OI Trend":
+            # Fetch OI Trend data (NSE OI Spurts with avgInOI > 2%)
+            with status_placeholder:
+                with st.spinner("Fetching OI Trend data..."):
+                    data, error = fetch_nse_data()
+            
+            if error:
+                st.error(f"Error fetching OI trend data: {error}")
+                status_placeholder.error("❌ Failed")
+            else:
+                status_placeholder.success("✅ Success")
+                st.session_state.oi_trend_last_update = datetime.now()
+                
+                # Process and display data
+                if data:
+                    df = process_oi_trend_data(data)
+                    
+                    if not df.empty:
+                        # Store in history
+                        st.session_state.oi_trend_data_history.append({
+                            'timestamp': datetime.now(),
+                            'data': df
+                        })
+                        
+                        # Keep only last 10 data points
+                        if len(st.session_state.oi_trend_data_history) > 10:
+                            st.session_state.oi_trend_data_history = st.session_state.oi_trend_data_history[-10:]
+                        
+                        # Update title row metrics
+                        if len(df) > 0:
+                            symbols_placeholder.metric("OI Trend Stocks", len(df))
+                            current_time = datetime.now().strftime("%H:%M:%S")
+                            updated_placeholder.metric("Updated", current_time)
+                        
+                        # Display current data
+                        with data_placeholder.container():
+                            # Compact metrics in a single row
+                            if len(df) > 0:
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    if 'chngInOI' in df.columns:
+                                        avg_oi_change = df['chngInOI'].mean() if pd.api.types.is_numeric_dtype(df['chngInOI']) else 0
+                                        st.metric("Avg OI Change", f"{avg_oi_change:.1f}")
+                                
+                                with col2:
+                                    if 'pctChngInOI' in df.columns:
+                                        max_pct_change = df['pctChngInOI'].max() if pd.api.types.is_numeric_dtype(df['pctChngInOI']) else 0
+                                        st.metric("Max % Change", f"{max_pct_change:.1f}%")
+                            
+                            # Main data table - larger and more prominent with click functionality
+                            st.subheader("📊 OI Trend Stocks (Click on a stock to see buildup data)")
+                            
+                            # Create clickable buttons for each stock
+                            if 'symbol' in df.columns:
+                                # Display stocks in a grid format
+                                cols_per_row = 4
+                                for i in range(0, len(df), cols_per_row):
+                                    cols = st.columns(cols_per_row)
+                                    for j, col in enumerate(cols):
+                                        if i + j < len(df):
+                                            stock_row = df.iloc[i + j]
+                                            symbol = stock_row['symbol']
+                                            avg_oi = stock_row.get('avgInOI', 0)
+                                            
+                                            with col:
+                                                if st.button(
+                                                    f"**{symbol}**\n{avg_oi:.1f}% OI",
+                                                    key=f"stock_{symbol}_{i}_{j}",
+                                                    use_container_width=True,
+                                                    type="primary" if st.session_state.selected_stock_symbol == symbol else "secondary"
+                                                ):
+                                                    st.session_state.selected_stock_symbol = symbol
+                                                    st.session_state.show_stock_detail_page = True
+                                                    st.session_state.buildup_data = None  # Reset data to force fresh fetch
+                                                    st.rerun()
+                            
+                            # Display full dataframe below the buttons
+                            st.dataframe(
+                                df,
+                                use_container_width=True,
+                                height=400
+                            )
+                            
+                            # Show instruction for users
+                            st.info("💡 Click on any stock button above to view detailed buildup data on a separate page.")
+                        
+                        # Charts section removed
+                    
+                    else:
+                        st.info("No stocks found with avgInOI > 2% in current data")
+                else:
+                    st.warning("No OI trend data available in the response")
+        
         else:  # Shortlisted Stocks section
             # Fetch Shortlisted Stocks data
             with status_placeholder:
@@ -913,6 +1371,122 @@ def main():
                     )
             else:
                 data_placeholder.info("No Daily Losers data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
+        
+        elif st.session_state.selected_section == "OI Trend":
+            if st.session_state.oi_trend_data_history:
+                latest_data = st.session_state.oi_trend_data_history[-1]['data']
+                
+                # Update title row metrics
+                if len(latest_data) > 0:
+                    symbols_placeholder.metric("OI Trend Stocks", len(latest_data))
+                    if st.session_state.oi_trend_last_update:
+                        updated_time = st.session_state.oi_trend_last_update.strftime("%H:%M:%S")
+                        updated_placeholder.metric("Updated", updated_time)
+                
+                with data_placeholder.container():
+                    # Display metrics
+                    if len(latest_data) > 0:
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if 'avgInOI' in latest_data.columns:
+                                avg_oi = latest_data['avgInOI'].mean() if pd.api.types.is_numeric_dtype(latest_data['avgInOI']) else 0
+                                st.metric("Avg OI", f"{avg_oi:.1f}%")
+                        
+                        with col2:
+                            if 'chngInOI' in latest_data.columns:
+                                avg_oi_change = latest_data['chngInOI'].mean() if pd.api.types.is_numeric_dtype(latest_data['chngInOI']) else 0
+                                st.metric("Avg OI Change", f"{avg_oi_change:.1f}")
+                        
+                        with col3:
+                            if 'pctChngInOI' in latest_data.columns:
+                                max_pct_change = latest_data['pctChngInOI'].max() if pd.api.types.is_numeric_dtype(latest_data['pctChngInOI']) else 0
+                                st.metric("Max % Change", f"{max_pct_change:.1f}%")
+                    
+                    # Display clickable stock buttons
+                    st.subheader("📊 OI Trend Stocks (Click on a stock to see buildup data)")
+                    
+                    # Create clickable buttons for each stock
+                    if 'symbol' in latest_data.columns:
+                        # Display stocks in a grid format
+                        cols_per_row = 4
+                        for i in range(0, len(latest_data), cols_per_row):
+                            cols = st.columns(cols_per_row)
+                            for j, col in enumerate(cols):
+                                if i + j < len(latest_data):
+                                    stock_row = latest_data.iloc[i + j]
+                                    symbol = stock_row['symbol']
+                                    avg_oi = stock_row.get('avgInOI', 0)
+                                    
+                                    with col:
+                                        if st.button(
+                                            f"**{symbol}**\n{avg_oi:.1f}% OI",
+                                            key=f"stock_static_{symbol}_{i}_{j}",
+                                            use_container_width=True,
+                                            type="primary" if st.session_state.selected_stock_symbol == symbol else "secondary"
+                                        ):
+                                            st.session_state.selected_stock_symbol = symbol
+                                            # Fetch buildup data
+                                            secid = get_secid_for_symbol(symbol, st.session_state.futstk_mapping)
+                                            if secid:
+                                                with st.spinner(f"Fetching buildup data for {symbol}..."):
+                                                    # Debug info for RBLBANK
+                                                    if symbol == "RBLBANK":
+                                                        st.write(f"🔍 Debug (Static): Calling fetch_buildup_data with secid: {secid}")
+                                                    
+                                                    buildup_raw, error = fetch_buildup_data(secid)
+                                                    
+                                                    # Debug the API response for RBLBANK
+                                                    if symbol == "RBLBANK":
+                                                        st.write(f"📊 Debug (Static): API Response - Raw data length: {len(buildup_raw) if buildup_raw else 0}")
+                                                        st.write(f"❌ Debug (Static): Error message: {error if error else 'None'}")
+                                                        if buildup_raw:
+                                                            st.write(f"📋 Debug (Static): First few raw data items: {buildup_raw[:2] if len(buildup_raw) > 0 else 'Empty list'}")
+                                                    
+                                                    if error:
+                                                        st.error(f"Error fetching buildup data: {error}")
+                                                        st.session_state.buildup_data = None
+                                                    else:
+                                                        formatted_data = format_buildup_data(buildup_raw)
+                                                        if symbol == "RBLBANK":
+                                                            st.write(f"📈 Debug (Static): Formatted data shape: {formatted_data.shape if not formatted_data.empty else 'Empty DataFrame'}")
+                                                        st.session_state.buildup_data = formatted_data
+                                            else:
+                                                st.error(f"No secid found for {symbol} in July 2025 futures")
+                                                st.session_state.buildup_data = None
+                                            st.rerun()
+                    
+                    # Display data table
+                    st.dataframe(
+                        latest_data,
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # Display buildup data if a stock is selected
+                    if st.session_state.selected_stock_symbol and st.session_state.buildup_data is not None:
+                        st.subheader(f"📈 Buildup Data for {st.session_state.selected_stock_symbol}")
+                        
+                        # Clear button
+                        if st.button("🔄 Clear Selection", key="clear_static", type="secondary"):
+                            st.session_state.selected_stock_symbol = None
+                            st.session_state.buildup_data = None
+                            st.rerun()
+                        
+                        if not st.session_state.buildup_data.empty:
+                            st.dataframe(
+                                st.session_state.buildup_data,
+                                use_container_width=True,
+                                height=300
+                            )
+                        else:
+                            st.info(f"No buildup data available for {st.session_state.selected_stock_symbol}")
+                    elif st.session_state.selected_stock_symbol:
+                        st.info(f"Loading buildup data for {st.session_state.selected_stock_symbol}...")
+                
+                # Charts section removed
+            else:
+                data_placeholder.info("No OI Trend data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
         
         else:  # Shortlisted Stocks section
             if st.session_state.shortlisted_data_history:

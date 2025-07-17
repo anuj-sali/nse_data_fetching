@@ -22,6 +22,13 @@ A real-time Streamlit dashboard that fetches and displays Open Interest (OI) spu
    ```bash
    pip install -r requirements.txt
    ```
+4. **Set up environment variables**:
+   - Copy `.env.example` to `.env`:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `.env` file and replace placeholder values with your actual API tokens from Dhan platform
+   - **Important**: Never commit the `.env` file to version control as it contains sensitive information
 
 ## Usage
 
