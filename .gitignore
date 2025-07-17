@@ -12,7 +12,6 @@ wheels/
 #Secure files
 api-scrip-master.csv
 nse_data_fetch.log
-futstk_mapping.json
 README_fetch_extract.md
 
 #.env
