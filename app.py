@@ -79,43 +79,44 @@ if 'nse_session_established' not in st.session_state:
 if 'session_creation_time' not in st.session_state:
     st.session_state.session_creation_time = None
 
-def create_nse_session():
-    try:
-        scraper = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False},
-            delay=1,
-            debug=False
-        )
+#latest one
+# def create_nse_session():
+#     try:
+#         scraper = cloudscraper.create_scraper(
+#             browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False},
+#             delay=1,
+#             debug=False
+#         )
         
-        # nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
+#         # nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
 
-        # if nse_cookie:
-        #     # parse cookie string manually and set each cookie
-        #     for cookie in nse_cookie.split(';'):
-        #         cookie = cookie.strip()
-        #         if '=' not in cookie:
-        #             continue
-        #         name, value = cookie.split('=', 1)
-        #         scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
+#         # if nse_cookie:
+#         #     # parse cookie string manually and set each cookie
+#         #     for cookie in nse_cookie.split(';'):
+#         #         cookie = cookie.strip()
+#         #         if '=' not in cookie:
+#         #             continue
+#         #         name, value = cookie.split('=', 1)
+#         #         scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
 
-        # Make a GET request to NSE main page to establish session
-        main_url = 'https://www.nseindia.com/market-data/oi-spurts'
-        headers = {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-            "accept-language": "en-US,en;q=0.9",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "referer": "https://www.nseindia.com/",
-        }
+#         # Make a GET request to NSE main page to establish session
+#         main_url = 'https://www.nseindia.com/market-data/oi-spurts'
+#         headers = {
+#             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+#             "accept-language": "en-US,en;q=0.9",
+#             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+#             "referer": "https://www.nseindia.com/",
+#         }
 
-        response = scraper.get(main_url, headers=headers, timeout=45)
-        if response.status_code == 200:
-            print("Session created successfully")
-            return scraper, None
-        else:
-            return None, f"Failed to establish session: {response.status_code}"
+#         response = scraper.get(main_url, headers=headers, timeout=45)
+#         if response.status_code == 200:
+#             print("Session created successfully")
+#             return scraper, None
+#         else:
+#             return None, f"Failed to establish session: {response.status_code}"
 
-    except Exception as e:
-        return None, f"Session creation failed: {str(e)}"
+#     except Exception as e:
+#         return None, f"Session creation failed: {str(e)}"
 # def create_nse_session():
 #     """Create a new NSE session with cloudscraper and inject NSE_COOKIE into cookie jar"""
 #     try:
@@ -231,33 +232,34 @@ def create_nse_session():
 #         return None, f"Session creation failed: {str(e)}"
 
 
-# def create_nse_session():
-#     """Create a new NSE session with cloudscraper"""
-#     try:
-#         scraper = cloudscraper.create_scraper(
-#             browser={
-#                 'browser': 'chrome',
-#                 'platform': 'windows',
-#                 'mobile': False
-#             },
-#             delay=1,
-#             debug=False
-#         )
+#old one
+def create_nse_session():
+    """Create a new NSE session with cloudscraper"""
+    try:
+        scraper = cloudscraper.create_scraper(
+            browser={
+                'browser': 'chrome',
+                'platform': 'windows',
+                'mobile': False
+            },
+            delay=1,
+            debug=False
+        )
         
-#         # Visit the main page to establish session
-#         main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
-#         main_response = scraper.get(main_page_url, timeout=45)
+        # Visit the main page to establish session
+        main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
+        main_response = scraper.get(main_page_url, timeout=45)
         
-#         if main_response.status_code == 200:
-#             st.session_state.nse_scraper = scraper
-#             st.session_state.nse_session_established = True
-#             st.session_state.session_creation_time = datetime.now()
-#             return scraper, None
-#         else:
-#             return None, f"Failed to establish session: {main_response.status_code}"
+        if main_response.status_code == 200:
+            st.session_state.nse_scraper = scraper
+            st.session_state.nse_session_established = True
+            st.session_state.session_creation_time = datetime.now()
+            return scraper, None
+        else:
+            return None, f"Failed to establish session: {main_response.status_code}"
             
-#     except Exception as e:
-#         return None, f"Session creation failed: {str(e)}"
+    except Exception as e:
+        return None, f"Session creation failed: {str(e)}"
 
 def refresh_nse_session():
     """Refresh the NSE session"""
