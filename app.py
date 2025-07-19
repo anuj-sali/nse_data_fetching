@@ -88,16 +88,16 @@ def create_nse_session():
             debug=False
         )
         
-        # nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
+        nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
 
-        # if nse_cookie:
-        #     # parse cookie string manually and set each cookie
-        #     for cookie in nse_cookie.split(';'):
-        #         cookie = cookie.strip()
-        #         if '=' not in cookie:
-        #             continue
-        #         name, value = cookie.split('=', 1)
-        #         scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
+        if nse_cookie:
+            # parse cookie string manually and set each cookie
+            for cookie in nse_cookie.split(';'):
+                cookie = cookie.strip()
+                if '=' not in cookie:
+                    continue
+                name, value = cookie.split('=', 1)
+                scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
 
         # Make a GET request to NSE main page to establish session
         main_url = 'https://www.nseindia.com/market-data/oi-spurts'
