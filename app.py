@@ -100,12 +100,9 @@ def create_nse_session():
         #         scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
 
         # Make a GET request to NSE main page to establish session
-        main_url = 'https://www.nseindia.com/market-data/oi-spurts'
+        main_url = 'https://www.nseindia.com'
         headers = {
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-            "accept-language": "en-US,en;q=0.9",
-            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "referer": "https://www.nseindia.com/",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
         }
 
         response = scraper.get(main_url, headers=headers, timeout=45)
@@ -334,6 +331,7 @@ def fetch_nse_data():
             "accept": "*/*",
             "accept-language": "en-US,en;q=0.9",
             "referer": "https://www.nseindia.com/market-data/oi-spurts",
+            "origin": "https://www.nseindia.com",
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
