@@ -10,10 +10,10 @@ import os
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
-from dotenv import load_dotenv
+from dotenv import load_dotenv,find_dotenv
 
 # Load environment variables
-load_dotenv()
+load_dotenv(find_dotenv())
 
 # Page configuration
 st.set_page_config(
@@ -66,6 +66,10 @@ if 'futstk_mapping' not in st.session_state:
     st.session_state.futstk_mapping = load_futstk_mapping()
 if 'show_stock_detail_page' not in st.session_state:
     st.session_state.show_stock_detail_page = False
+if 'oi_based_shortlist_data_history' not in st.session_state:
+    st.session_state.oi_based_shortlist_data_history = []
+if 'oi_based_shortlist_last_update' not in st.session_state:
+    st.session_state.oi_based_shortlist_last_update = None
 # Session management for scrapers
 if 'nse_scraper' not in st.session_state:
     st.session_state.nse_scraper = None
@@ -89,7 +93,7 @@ def create_nse_session():
         
         # Visit the main page to establish session
         main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
-        main_response = scraper.get(main_page_url, timeout=30)
+        main_response = scraper.get(main_page_url, timeout=45)
         
         if main_response.status_code == 200:
             st.session_state.nse_scraper = scraper
@@ -603,6 +607,99 @@ def process_shortlisted_stocks():
     except Exception as e:
         return pd.DataFrame(), str(e)
 
+def process_oi_based_shortlisted_stocks():
+    """Process and filter stocks based on matching buildup patterns in 9:15-9:30 and 9:30-9:45 intervals"""
+    try:
+        shortlisted_stocks = []
+        
+        # Fetch OI trend data (stocks with avgInOI > 2%)
+        oi_data, oi_error = fetch_nse_data()
+        if oi_error:
+            return pd.DataFrame(), f"Error fetching OI data: {oi_error}"
+        
+        # Process OI data to get filtered stocks
+        oi_df = process_oi_trend_data(oi_data) if oi_data else pd.DataFrame()
+        
+        if oi_df.empty or 'symbol' not in oi_df.columns:
+            return pd.DataFrame(), "No OI trend data available"
+        
+        # For each stock in OI trend, check buildup patterns
+        for _, stock_row in oi_df.iterrows():
+            symbol = stock_row['symbol']
+            
+            # Get secid for the symbol
+            secid = get_secid_for_symbol(symbol, st.session_state.futstk_mapping)
+            if not secid:
+                continue
+            
+            # Fetch buildup data
+            buildup_raw, buildup_error = fetch_buildup_data(secid)
+            if buildup_error or not buildup_raw:
+                continue
+            
+            # Check for matching patterns in 9:15-9:30 and 9:30-9:45 intervals
+            matching_pattern = check_matching_buildup_patterns(buildup_raw)
+            if matching_pattern:
+                combined_row = {
+                    'Symbol': symbol,
+                    'avgInOI': stock_row.get('avgInOI', 0),
+                    'chngInOI': stock_row.get('chngInOI', 0),
+                    'pctChngInOI': stock_row.get('pctChngInOI', 0),
+                    'Buildup Pattern': matching_pattern,
+                    'Pattern Intervals': '9:15-9:30 & 9:30-9:45'
+                }
+                shortlisted_stocks.append(combined_row)
+        
+        # Create final DataFrame
+        if shortlisted_stocks:
+            df = pd.DataFrame(shortlisted_stocks)
+            df['timestamp'] = datetime.now()
+            return df, None
+        else:
+            return pd.DataFrame(), None
+            
+    except Exception as e:
+        return pd.DataFrame(), str(e)
+
+def check_matching_buildup_patterns(buildup_raw):
+    """Check if 9:15-9:30 and 9:30-9:45 intervals have matching buildup patterns"""
+    try:
+        if not buildup_raw or len(buildup_raw) < 2:
+            return None
+        
+        # Convert timestamps and find the target intervals
+        interval_915_930 = None
+        interval_930_945 = None
+        
+        for row in buildup_raw:
+            start_time = datetime.utcfromtimestamp(row['st']) + timedelta(hours=5, minutes=30)
+            end_time = datetime.utcfromtimestamp(row['et']) + timedelta(hours=5, minutes=30)
+            
+            start_str = start_time.strftime('%H:%M')
+            end_str = end_time.strftime('%H:%M')
+            
+            # Check for 9:15-9:30 interval
+            if start_str == '09:15' and end_str == '09:30':
+                interval_915_930 = row['btc']
+            # Check for 9:30-9:45 interval
+            elif start_str == '09:30' and end_str == '09:45':
+                interval_930_945 = row['btc']
+        
+        # Check if we have both intervals and they match
+        if interval_915_930 and interval_930_945 and interval_915_930 == interval_930_945:
+            pattern_map = {
+                'LB': 'Long Buildup',
+                'SB': 'Short Buildup', 
+                'LU': 'Long Unwinding',
+                'SC': 'Short Covering'
+            }
+            return pattern_map.get(interval_915_930, interval_915_930)
+        
+        return None
+        
+    except Exception as e:
+        return None
+
 def show_stock_detail_page():
     """Show detailed tabular data for the selected stock"""
     st.title(f"📊 Stock Details: {st.session_state.selected_stock_symbol}")
@@ -833,6 +930,10 @@ def main():
     
     if st.sidebar.button("⭐ SHORTLISTED STOCKS", use_container_width=True, type="primary" if st.session_state.selected_section == "Shortlisted Stocks" else "secondary"):
         st.session_state.selected_section = "Shortlisted Stocks"
+        st.rerun()
+    
+    if st.sidebar.button("🎯 SHORTLISTED STOCKS BASED ON OI", use_container_width=True, type="primary" if st.session_state.selected_section == "OI Based Shortlist" else "secondary"):
+        st.session_state.selected_section = "OI Based Shortlist"
         st.rerun()
     
     st.sidebar.markdown("---")
@@ -1199,7 +1300,7 @@ def main():
                 else:
                     st.warning("No OI trend data available in the response")
         
-        else:  # Shortlisted Stocks section
+        elif st.session_state.selected_section == "Shortlisted Stocks":
             # Fetch Shortlisted Stocks data
             with status_placeholder:
                 with st.spinner("Processing Shortlisted Stocks data..."):
@@ -1291,6 +1392,68 @@ def main():
                 
                 else:
                     st.info("No stocks meet the shortlisting criteria (>2% movement + avgInOI >7)")
+        
+        else:  # OI Based Shortlist section
+            # Fetch OI Based Shortlisted Stocks data
+            with status_placeholder:
+                with st.spinner("Processing OI Based Shortlisted Stocks data..."):
+                    df, error = process_oi_based_shortlisted_stocks()
+            
+            if error:
+                st.error(f"Error processing OI based shortlisted stocks: {error}")
+                status_placeholder.error("❌ Failed")
+            else:
+                status_placeholder.success("✅ Success")
+                st.session_state.oi_based_shortlist_last_update = datetime.now()
+                
+                # Process and display data
+                if not df.empty:
+                    # Store in history
+                    st.session_state.oi_based_shortlist_data_history.append({
+                        'timestamp': datetime.now(),
+                        'data': df
+                    })
+                    
+                    # Keep only last 10 data points
+                    if len(st.session_state.oi_based_shortlist_data_history) > 10:
+                        st.session_state.oi_based_shortlist_data_history = st.session_state.oi_based_shortlist_data_history[-10:]
+                    
+                    # Update title row metrics
+                    symbols_placeholder.metric("OI Shortlisted", len(df))
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    updated_placeholder.metric("Updated", current_time)
+                    
+                    # Display current data with enhanced metrics
+                    with data_placeholder.container():
+                        # Enhanced metrics for OI-based shortlisted stocks
+                        if len(df) > 0:
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                long_buildup_count = len(df[df['Buildup Pattern'] == 'Long Buildup'])
+                                st.metric("Long Buildup", long_buildup_count)
+                            
+                            with col2:
+                                short_buildup_count = len(df[df['Buildup Pattern'] == 'Short Buildup'])
+                                st.metric("Short Buildup", short_buildup_count)
+                            
+                            with col3:
+                                long_unwinding_count = len(df[df['Buildup Pattern'] == 'Long Unwinding'])
+                                st.metric("Long Unwinding", long_unwinding_count)
+                            
+                            with col4:
+                                short_covering_count = len(df[df['Buildup Pattern'] == 'Short Covering'])
+                                st.metric("Short Covering", short_covering_count)
+                        
+                        # Main data table
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                            height=700
+                        )
+                
+                else:
+                    st.info("No stocks found with matching buildup patterns between 9:15-9:30 and 9:30-9:45 intervals")
         
         # Countdown for next refresh
         if auto_refresh:
@@ -1488,7 +1651,7 @@ def main():
             else:
                 data_placeholder.info("No OI Trend data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
         
-        else:  # Shortlisted Stocks section
+        elif st.session_state.selected_section == "Shortlisted Stocks":
             if st.session_state.shortlisted_data_history:
                 latest_data = st.session_state.shortlisted_data_history[-1]['data']
                 
@@ -1560,6 +1723,48 @@ def main():
                         st.plotly_chart(fig_bar, use_container_width=True)
             else:
                 data_placeholder.info("No Shortlisted Stocks data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
+        
+        elif st.session_state.selected_section == "OI Based Shortlist":
+            if st.session_state.oi_based_shortlist_data_history:
+                latest_data = st.session_state.oi_based_shortlist_data_history[-1]['data']
+                
+                # Update title row metrics
+                if len(latest_data) > 0:
+                    symbols_placeholder.metric("OI Shortlisted", len(latest_data))
+                    if st.session_state.oi_based_shortlist_last_update:
+                        updated_time = st.session_state.oi_based_shortlist_last_update.strftime("%H:%M:%S")
+                        updated_placeholder.metric("Updated", updated_time)
+                
+                # Display current data
+                with data_placeholder.container():
+                    # Display metrics for OI-based shortlisted stocks
+                    if len(latest_data) > 0:
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            long_buildup_count = len(latest_data[latest_data['Buildup Pattern'] == 'Long Buildup'])
+                            st.metric("Long Buildup", long_buildup_count)
+                        
+                        with col2:
+                            short_buildup_count = len(latest_data[latest_data['Buildup Pattern'] == 'Short Buildup'])
+                            st.metric("Short Buildup", short_buildup_count)
+                        
+                        with col3:
+                            long_unwinding_count = len(latest_data[latest_data['Buildup Pattern'] == 'Long Unwinding'])
+                            st.metric("Long Unwinding", long_unwinding_count)
+                        
+                        with col4:
+                            short_covering_count = len(latest_data[latest_data['Buildup Pattern'] == 'Short Covering'])
+                            st.metric("Short Covering", short_covering_count)
+                    
+                    # Main data table
+                    st.dataframe(
+                        latest_data,
+                        use_container_width=True,
+                        height=700
+                    )
+            else:
+                data_placeholder.info("No OI Based Shortlisted data available. Enable auto-refresh or click 'Refresh Now' to fetch data.")
 
 if __name__ == "__main__":
     main()
