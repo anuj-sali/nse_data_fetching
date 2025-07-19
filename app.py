@@ -90,11 +90,18 @@ def create_nse_session():
             delay=1,
             debug=False
         )
-        
-        # Visit the main page to establish session
+
+        # Visit the main page to establish session with headers
         main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
-        main_response = scraper.get(main_page_url, timeout=45)
-        
+        headers = {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+            "accept-language": "en-US,en;q=0.9",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "referer": "https://www.nseindia.com/",
+        }
+
+        main_response = scraper.get(main_page_url, headers=headers, timeout=45)
+
         if main_response.status_code == 200:
             st.session_state.nse_scraper = scraper
             st.session_state.nse_session_established = True
@@ -105,6 +112,35 @@ def create_nse_session():
             
     except Exception as e:
         return None, f"Session creation failed: {str(e)}"
+
+
+# def create_nse_session():
+#     """Create a new NSE session with cloudscraper"""
+#     try:
+#         scraper = cloudscraper.create_scraper(
+#             browser={
+#                 'browser': 'chrome',
+#                 'platform': 'windows',
+#                 'mobile': False
+#             },
+#             delay=1,
+#             debug=False
+#         )
+        
+#         # Visit the main page to establish session
+#         main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
+#         main_response = scraper.get(main_page_url, timeout=45)
+        
+#         if main_response.status_code == 200:
+#             st.session_state.nse_scraper = scraper
+#             st.session_state.nse_session_established = True
+#             st.session_state.session_creation_time = datetime.now()
+#             return scraper, None
+#         else:
+#             return None, f"Failed to establish session: {main_response.status_code}"
+            
+#     except Exception as e:
+#         return None, f"Session creation failed: {str(e)}"
 
 def refresh_nse_session():
     """Refresh the NSE session"""
@@ -149,156 +185,6 @@ def refresh_buildup_session():
     st.session_state.buildup_data = None  # Clear cached data
     return create_buildup_session()
 
-# def fetch_nse_data():
-#     """Fetch data from NSE API using cloudscraper with dynamic session management"""
-#     try:
-#         # Check if we need to create or refresh session
-#         session_age_limit = 30 * 60  # 30 minutes
-#         current_time = datetime.now()
-
-#         need_new_session = (
-#             not st.session_state.nse_session_established or
-#             st.session_state.nse_scraper is None or
-#             (st.session_state.session_creation_time and 
-#              (current_time - st.session_state.session_creation_time).seconds > session_age_limit)
-#         )
-
-#         if need_new_session:
-#             scraper, error = create_nse_session()
-#             if error:
-#                 return None, error
-#         else:
-#             scraper = st.session_state.nse_scraper
-
-#         # API endpoint
-#         api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
-
-#         # Updated July 2025 headers
-#         headers = {
-#             "authority": "www.nseindia.com",
-#             "method": "GET",
-#             "scheme": "https",
-#             "accept": "*/*",
-#             "accept-encoding": "gzip, deflate, br, zstd",
-#             "accept-language": "en-US,en;q=0.9",
-#             "cookie": os.getenv('NSE_COOKIE'),  # store long cookie in .env or secure source
-#             "priority": "u=1, i",
-#             "referer": "https://www.nseindia.com/market-data/oi-spurts",
-#             "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
-#             "sec-ch-ua-mobile": "?0",
-#             "sec-ch-ua-platform": '"Windows"',
-#             "sec-fetch-dest": "empty",
-#             "sec-fetch-mode": "cors",
-#             "sec-fetch-site": "same-origin",
-#             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
-#         }
-
-#         # Make the API request with retry and session refresh logic
-#         max_retries = 3
-#         for attempt in range(max_retries):
-#             try:
-#                 response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
-
-#                 if response.status_code == 401 and attempt == 0:
-#                     scraper, refresh_error = refresh_nse_session()
-#                     if refresh_error:
-#                         return None, f"Session refresh failed: {refresh_error}"
-#                     continue
-
-#                 break
-#             except Exception as e:
-#                 if attempt == max_retries - 1:
-#                     return None, f"Request failed after {max_retries} attempts: {str(e)}"
-#                 time.sleep(2 ** attempt)
-
-#         # Handle response decompression
-#         content_encoding = response.headers.get("Content-Encoding", "")
-#         try:
-#             if "br" in content_encoding:
-#                 decoded = brotli.decompress(response.content).decode("utf-8")
-#             elif "gzip" in content_encoding:
-#                 buf = io.BytesIO(response.content)
-#                 decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
-#             else:
-#                 decoded = response.text
-#         except Exception as decomp_error:
-#             try:
-#                 decoded = response.text
-#             except Exception:
-#                 return None, f"Decompression failed: {str(decomp_error)}"
-
-#         if response.status_code == 200:
-#             data = json.loads(decoded)
-#             return data, None
-#         else:
-#             return None, f"HTTP Error: {response.status_code}"
-
-#     except Exception as e:
-#         return None, str(e)
-
-# def fetch_nse_data():
-#     """Fetch data from NSE API using cloudscraper"""
-#     try:
-#         # Create scraper with better configuration
-#         scraper = cloudscraper.create_scraper(
-#             browser={
-#                 'browser': 'chrome',
-#                 'platform': 'windows',
-#                 'mobile': False
-#             }
-#         )
-        
-#         url = "https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings"
-        
-#         headers = {
-#             "authority": "www.nseindia.com",
-#             "method": "GET",
-#             "scheme": "https",
-#             "accept": "*/*",
-#             "accept-encoding": "gzip, deflate, br, zstd",
-#             "accept-language": "en-US,en;q=0.9",
-#             "cookie": os.getenv('NSE_COOKIE'),  # store long cookie in .env or secure source
-#             "priority": "u=1, i",
-#             "referer": "https://www.nseindia.com/market-data/oi-spurts",
-#             "sec-ch-ua": '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-#             "sec-ch-ua-mobile": "?0",
-#             "sec-ch-ua-platform": '"Windows"',
-#             "sec-fetch-dest": "empty",
-#             "sec-fetch-mode": "cors",
-#             "sec-fetch-site": "same-origin",
-#             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-#         }
-        
-#         # Add timeout and session handling
-#         response = scraper.get(url, headers=headers, timeout=30, allow_redirects=True)
-        
-#         # Decompression logic with better error handling
-#         content_encoding = response.headers.get("Content-Encoding", "")
-        
-#         try:
-#             if "br" in content_encoding:
-#                 decoded = brotli.decompress(response.content).decode("utf-8")
-#             elif "gzip" in content_encoding:
-#                 buf = io.BytesIO(response.content)
-#                 decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
-#             else:
-#                 decoded = response.text
-#         except Exception as decomp_error:
-#             # Fallback: try to use response.text directly
-#             try:
-#                 decoded = response.text
-#             except Exception:
-#                 return None, f"Decompression failed: {str(decomp_error)}"
-        
-#         if response.status_code == 200:
-#             data = json.loads(decoded)
-#             return data, None
-#         else:
-#             return None, f"HTTP Error: {response.status_code}"
-            
-#     except Exception as e:
-#         return None, str(e)
-
 
 def fetch_nse_data():
     """Fetch data from NSE API using cloudscraper with dynamic session management"""
@@ -335,24 +221,6 @@ def fetch_nse_data():
             "x-requested-with": "XMLHttpRequest"
         }
 
-        # headers = {
-        #     "authority": "www.nseindia.com",
-        #     "method": "GET",
-        #     "scheme": "https",
-        #     "accept": "*/*",
-        #     "accept-encoding": "gzip, deflate, br, zstd",
-        #     "accept-language": "en-US,en;q=0.9",
-        #     "cookie": '_ga=GA1.1.18464289.1730266031; _ga_WM2NSQKJEK=GS1.1.1735875695.44.1.1735875696.0.0.0; RT="z=1&dm=nseindia.com&si=96331740-7614-46dc-9e3d-d7767f37861d&ss=mclesgis&sl=0&se=8c&tt=0&bcn=%2F%2F684d0d41.akstat.io%2F"; nsit=UkPn2El-OD2HVC-9lCF9_Qwi; nseappid=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcGkubnNlIiwiYXVkIjoiYXBpLm5zZSIsImlhdCI6MTc1MTQ1NjUzNywiZXhwIjoxNzUxNDYzNzM3fQ.rU6cmfzkOsSyG5qNIJMBRkuJzDaqRtpFO_XLNatP9e4; AKA_A2=A; bm_sz=CA6006F39A25B75879CFED8262273578~YAAQVqXBF8s+msaXAQAAeN3xyhzSrsKD22q9+71Wjn13MwMlm8x/3afE3NttBmXqSu2QHWULilv5Ch5KP8XItXOeENQzWA64z69YHZnQHne3MpZ5DLiCEPEV1trF26A+rZNvaz9UYf+Pa3/aM7Tna8D3IzoZHCdLTyT7GomloOn/3xSQurGkC7fVqMzBc9t/hYCG0ssvHbGefaWcmYZ0JPurTX/NMCFmVX35KU/ojR6taGcyeGemwvgfyRAfr1fJdDVNYVNeBMMb8FnsTszmeC3y5WmQ0o8d26XPBRI4trI6AddtyGXdhWDJnvGFC8IJGPPmJmhBV2hehpihDcXV3KMiYCHENDypHpgjFD9Yiq1M6Po7Vj28Q8Te1YImjmaJf6WxX1cfJD+3B36b+Xiliw==~3421753~3425350; _abck=F1A8BF8BE1D7DEEE6716BEE0DF25EC28~0~YAAQVqXBF0M/msaXAQAAyuDxyg7FvgMEPDjpKfQnUNY9eGvyDUiQZnEeoul7arU7S3UusQ/VkYcVLlASaxZUepoev2jRVzbf9mFqJVPGnb4C+XHBkj8hRKNog2RPKjefkCbCYLBO5R2Y77W5RrrEf6LEMZ441Tr6oyKIIuwCImeczLDjIpJMYoDq2wnELe7CI0MiarE5gd3ySe6g3elmkeldQbNLqg8CEjXd/MFBfB7K/UIFAm0Mi2+zlowjh/5lSfqABPlSYobUB+4Qi18TKsBFkV9rfhq7U1tHMmmfKMxchJqHhPsyu7go4jWswXOCC1jrbBkeqotJIMMIgZvc+UCEUg0nCWYqsYuodXPq7MRKl8FDlHvDqd3FjbdHtCkrbc0RUclChBS0oXOCCftKVVPack3kHzvJPYTQ9v3TbSLAEaEgtg9ZwuOhi5zpua4LT4BvftaVSuS9Q9SoYK3tgKzT9hogTApPf9Dw1qxyasad8wQsQOcvUKB03K5QpdYod8oFuIQ74dtB7m9BK5Xqe/EhILzXZ6LbQOMHfcPlJb8ZpRhcCrBr+Xo3WVutIAkWtijFI/D6nVWf~-1~-1~-1; bm_sv=BC8EC02FCFD5F4B70FC5EEFA1E6B94A0~YAAQVqXBF4M/msaXAQAAVuLxyhymlyr7sIX08KxzrLfHlh0qYbuU1+E5/KlWkXotmcTWZu6SL4b85VtPCavMcu8r3h2THpgCVU9fo+l6IrkbFntO0ZEI7t2XCDBLvpf8unN5yfuG00ONDauZ39hAd5/qfRvwT+a8BECTNjchorvbdJ3MAiOg9wTN5Bq+VAElR3+nSu6kb/82cpKwt98jJdxnFLYKByUGwSwHMkXoYwf9OSOF+8o9/sYB/Nj0wHPWcB8=~1',
-        #     "priority": "u=1, i",
-        #     "referer": "https://www.nseindia.com/market-data/oi-spurts",
-        #     "sec-ch-ua": '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-        #     "sec-ch-ua-mobile": "?0",
-        #     "sec-ch-ua-platform": '"Windows"',
-        #     "sec-fetch-dest": "empty",
-        #     "sec-fetch-mode": "cors",
-        #     "sec-fetch-site": "same-origin",
-        #     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-        # }
         
         # Make the API request with retry and session refresh logic
         max_retries = 3
