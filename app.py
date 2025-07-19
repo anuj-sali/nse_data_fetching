@@ -87,16 +87,16 @@ def create_nse_session():
             debug=False
         )
         
-        nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
+        # nse_cookie = st.secrets["NSE_COOKIE"] #os.getenv("NSE_COOKIE")  # or 
 
-        if nse_cookie:
-            # parse cookie string manually and set each cookie
-            for cookie in nse_cookie.split(';'):
-                cookie = cookie.strip()
-                if '=' not in cookie:
-                    continue
-                name, value = cookie.split('=', 1)
-                scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
+        # if nse_cookie:
+        #     # parse cookie string manually and set each cookie
+        #     for cookie in nse_cookie.split(';'):
+        #         cookie = cookie.strip()
+        #         if '=' not in cookie:
+        #             continue
+        #         name, value = cookie.split('=', 1)
+        #         scraper.cookies.set(name.strip(), value.strip(), domain=".nseindia.com", path='/')
 
         # Make a GET request to NSE main page to establish session
         main_url = 'https://www.nseindia.com/market-data/oi-spurts'
@@ -484,7 +484,7 @@ def fetch_nse_data():
             scraper = st.session_state.nse_scraper
 
         api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
-        nse_cookie = st.secrets["NSE_COOKIE"]
+        # nse_cookie = st.secrets["NSE_COOKIE"]
 
         headers = {
             "accept": "*/*",
@@ -499,8 +499,8 @@ def fetch_nse_data():
         }
 
         # Optional: You can omit this since cookies are in scraper.cookies, but keep if needed
-        if nse_cookie:
-            headers["cookie"] = nse_cookie
+        # if nse_cookie:
+        #     headers["cookie"] = nse_cookie
 
         max_retries = 3
         for attempt in range(max_retries):
