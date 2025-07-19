@@ -302,88 +302,88 @@ def refresh_buildup_session():
     st.session_state.buildup_data = None  # Clear cached data
     return create_buildup_session()
 
+#old one
+def fetch_nse_data():
+    """Fetch data from NSE API using cloudscraper with dynamic session management"""
+    try:
+        # Check if we need to create or refresh session
+        session_age_limit = 30 * 60  # 30 minutes
+        current_time = datetime.now()
+        
+        need_new_session = (
+            not st.session_state.nse_session_established or
+            st.session_state.nse_scraper is None or
+            (st.session_state.session_creation_time and 
+             (current_time - st.session_state.session_creation_time).seconds > session_age_limit)
+        )
+        
+        if need_new_session:
+            scraper, error = create_nse_session()
+            if error:
+                return None, error
+        else:
+            scraper = st.session_state.nse_scraper
+        
+        # API endpoint
+        api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
+        
+        # Use minimal headers
+        headers = {
+            "accept": "*/*",
+            "accept-language": "en-US,en;q=0.9",
+            "referer": "https://www.nseindia.com/market-data/oi-spurts",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "x-requested-with": "XMLHttpRequest"
+        }
 
-# def fetch_nse_data():
-#     """Fetch data from NSE API using cloudscraper with dynamic session management"""
-#     try:
-#         # Check if we need to create or refresh session
-#         session_age_limit = 30 * 60  # 30 minutes
-#         current_time = datetime.now()
         
-#         need_new_session = (
-#             not st.session_state.nse_session_established or
-#             st.session_state.nse_scraper is None or
-#             (st.session_state.session_creation_time and 
-#              (current_time - st.session_state.session_creation_time).seconds > session_age_limit)
-#         )
-        
-#         if need_new_session:
-#             scraper, error = create_nse_session()
-#             if error:
-#                 return None, error
-#         else:
-#             scraper = st.session_state.nse_scraper
-        
-#         # API endpoint
-#         api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
-        
-#         # Use minimal headers
-#         headers = {
-#             "accept": "*/*",
-#             "accept-language": "en-US,en;q=0.9",
-#             "referer": "https://www.nseindia.com/market-data/oi-spurts",
-#             "sec-fetch-dest": "empty",
-#             "sec-fetch-mode": "cors",
-#             "sec-fetch-site": "same-origin",
-#             "x-requested-with": "XMLHttpRequest"
-#         }
-
-        
-#         # Make the API request with retry and session refresh logic
-#         max_retries = 3
-#         for attempt in range(max_retries):
-#             try:
-#                 response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
+        # Make the API request with retry and session refresh logic
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
                 
-#                 # If we get 401, try refreshing session once
-#                 if response.status_code == 401 and attempt == 0:
-#                     scraper, refresh_error = refresh_nse_session()
-#                     if refresh_error:
-#                         return None, f"Session refresh failed: {refresh_error}"
-#                     continue
+                # If we get 401, try refreshing session once
+                if response.status_code == 401 and attempt == 0:
+                    scraper, refresh_error = refresh_nse_session()
+                    if refresh_error:
+                        return None, f"Session refresh failed: {refresh_error}"
+                    continue
                     
-#                 break
-#             except Exception as e:
-#                 if attempt == max_retries - 1:
-#                     return None, f"Request failed after {max_retries} attempts: {str(e)}"
-#                 time.sleep(2 ** attempt)  # Exponential backoff
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return None, f"Request failed after {max_retries} attempts: {str(e)}"
+                time.sleep(2 ** attempt)  # Exponential backoff
         
-#         # Decompression logic with better error handling
-#         content_encoding = response.headers.get("Content-Encoding", "")
+        # Decompression logic with better error handling
+        content_encoding = response.headers.get("Content-Encoding", "")
         
-#         try:
-#             if "br" in content_encoding:
-#                 decoded = brotli.decompress(response.content).decode("utf-8")
-#             elif "gzip" in content_encoding:
-#                 buf = io.BytesIO(response.content)
-#                 decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
-#             else:
-#                 decoded = response.text
-#         except Exception as decomp_error:
-#             # Fallback: try to use response.text directly
-#             try:
-#                 decoded = response.text
-#             except Exception:
-#                 return None, f"Decompression failed: {str(decomp_error)}"
+        try:
+            if "br" in content_encoding:
+                decoded = brotli.decompress(response.content).decode("utf-8")
+            elif "gzip" in content_encoding:
+                buf = io.BytesIO(response.content)
+                decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
+            else:
+                decoded = response.text
+        except Exception as decomp_error:
+            # Fallback: try to use response.text directly
+            try:
+                decoded = response.text
+            except Exception:
+                return None, f"Decompression failed: {str(decomp_error)}"
         
-#         if response.status_code == 200:
-#             data = json.loads(decoded)
-#             return data, None
-#         else:
-#             return None, f"HTTP Error: {response.status_code}"
+        if response.status_code == 200:
+            data = json.loads(decoded)
+            return data, None
+        else:
+            return None, f"HTTP Error: {response.status_code}"
             
-#     except Exception as e:
-#         return None, str(e)
+    except Exception as e:
+        return None, str(e)
 
 # def fetch_nse_data():
 #     """Fetch data from NSE API using cloudscraper with dynamic session management"""
@@ -463,85 +463,87 @@ def refresh_buildup_session():
 #     except Exception as e:
 #         return None, str(e)
 
-def fetch_nse_data():
-    """Fetch data from NSE API using cloudscraper with dynamic session management"""
-    try:
-        session_age_limit = 30 * 60  # 30 minutes
-        current_time = datetime.now()
 
-        need_new_session = (
-            not st.session_state.get('nse_session_established', False) or
-            st.session_state.get('nse_scraper', None) is None or
-            (st.session_state.get('session_creation_time', None) and 
-             (current_time - st.session_state.session_creation_time).seconds > session_age_limit)
-        )
+#latest one
+# def fetch_nse_data():
+#     """Fetch data from NSE API using cloudscraper with dynamic session management"""
+#     try:
+#         session_age_limit = 30 * 60  # 30 minutes
+#         current_time = datetime.now()
 
-        if need_new_session:
-            scraper, error = create_nse_session()
-            if error:
-                return None, error
-        else:
-            scraper = st.session_state.nse_scraper
+#         need_new_session = (
+#             not st.session_state.get('nse_session_established', False) or
+#             st.session_state.get('nse_scraper', None) is None or
+#             (st.session_state.get('session_creation_time', None) and 
+#              (current_time - st.session_state.session_creation_time).seconds > session_age_limit)
+#         )
 
-        api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
-        # nse_cookie = st.secrets["NSE_COOKIE"]
+#         if need_new_session:
+#             scraper, error = create_nse_session()
+#             if error:
+#                 return None, error
+#         else:
+#             scraper = st.session_state.nse_scraper
 
-        headers = {
-            "accept": "*/*",
-            "accept-language": "en-US,en;q=0.9",
-            "referer": "https://www.nseindia.com/market-data/oi-spurts",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin",
-            "x-requested-with": "XMLHttpRequest",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-        }
+#         api_url = os.getenv('NSE_OI_SPURTS_API_URL', 'https://www.nseindia.com/api/live-analysis-oi-spurts-underlyings')
+#         # nse_cookie = st.secrets["NSE_COOKIE"]
 
-        # Optional: You can omit this since cookies are in scraper.cookies, but keep if needed
-        # if nse_cookie:
-        #     headers["cookie"] = nse_cookie
+#         headers = {
+#             "accept": "*/*",
+#             "accept-language": "en-US,en;q=0.9",
+#             "referer": "https://www.nseindia.com/market-data/oi-spurts",
+#             "sec-fetch-dest": "empty",
+#             "sec-fetch-mode": "cors",
+#             "sec-fetch-site": "same-origin",
+#             "x-requested-with": "XMLHttpRequest",
+#             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+#                           "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+#         }
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
+#         # Optional: You can omit this since cookies are in scraper.cookies, but keep if needed
+#         # if nse_cookie:
+#         #     headers["cookie"] = nse_cookie
 
-                if response.status_code == 401 and attempt == 0:
-                    scraper, refresh_error = refresh_nse_session()
-                    if refresh_error:
-                        return None, f"Session refresh failed: {refresh_error}"
-                    continue
+#         max_retries = 3
+#         for attempt in range(max_retries):
+#             try:
+#                 response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
 
-                break
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    return None, f"Request failed after {max_retries} attempts: {str(e)}"
-                time.sleep(2 ** attempt)
+#                 if response.status_code == 401 and attempt == 0:
+#                     scraper, refresh_error = refresh_nse_session()
+#                     if refresh_error:
+#                         return None, f"Session refresh failed: {refresh_error}"
+#                     continue
 
-        content_encoding = response.headers.get("Content-Encoding", "")
-        try:
-            if "br" in content_encoding:
-                decoded = brotli.decompress(response.content).decode("utf-8")
-            elif "gzip" in content_encoding:
-                buf = io.BytesIO(response.content)
-                decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
-            else:
-                decoded = response.text
-        except Exception as decomp_error:
-            try:
-                decoded = response.text
-            except Exception:
-                return None, f"Decompression failed: {str(decomp_error)}"
+#                 break
+#             except Exception as e:
+#                 if attempt == max_retries - 1:
+#                     return None, f"Request failed after {max_retries} attempts: {str(e)}"
+#                 time.sleep(2 ** attempt)
 
-        if response.status_code == 200:
-            data = json.loads(decoded)
-            return data, None
-        else:
-            return None, f"HTTP Error: {response.status_code}"
+#         content_encoding = response.headers.get("Content-Encoding", "")
+#         try:
+#             if "br" in content_encoding:
+#                 decoded = brotli.decompress(response.content).decode("utf-8")
+#             elif "gzip" in content_encoding:
+#                 buf = io.BytesIO(response.content)
+#                 decoded = gzip.GzipFile(fileobj=buf).read().decode("utf-8")
+#             else:
+#                 decoded = response.text
+#         except Exception as decomp_error:
+#             try:
+#                 decoded = response.text
+#             except Exception:
+#                 return None, f"Decompression failed: {str(decomp_error)}"
 
-    except Exception as e:
-        return None, str(e)
+#         if response.status_code == 200:
+#             data = json.loads(decoded)
+#             return data, None
+#         else:
+#             return None, f"HTTP Error: {response.status_code}"
+
+#     except Exception as e:
+#         return None, str(e)
 
 
 def fetch_daily_gainers():
