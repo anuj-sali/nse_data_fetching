@@ -345,7 +345,7 @@ def fetch_nse_data():
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = scraper.get(api_url, headers=headers, timeout=40, allow_redirects=True)
+                response = scraper.get(api_url, headers=headers, timeout=30, allow_redirects=True)
                 
                 # If we get 401, try refreshing session once
                 if response.status_code == 401 and attempt == 0:
