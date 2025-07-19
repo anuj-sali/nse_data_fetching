@@ -92,7 +92,7 @@ def create_nse_session():
         )
 
         main_page_url = os.getenv('NSE_MAIN_PAGE_URL', 'https://www.nseindia.com/market-data/oi-spurts')
-        nse_cookie = os.getenv('NSE_COOKIE')
+        nse_cookie = os.getenv("NSE_COOKIE")
 
         headers = {
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
