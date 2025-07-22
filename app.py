@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv,find_dotenv
 from http.cookies import SimpleCookie
-from database import oi_db
+from database import financial_db
 import threading
 
 # Load environment variables
@@ -320,7 +320,7 @@ def store_oi_data_async(data, fetch_time, processing_time_ms=0, db_enabled=True)
     def store_data():
         try:
             if db_enabled and data:
-                snapshot_id = oi_db.store_snapshot(data, fetch_time, processing_time_ms)
+                snapshot_id = financial_db.store_snapshot(data, fetch_time, processing_time_ms)
                 if snapshot_id:
                     print(f"Stored snapshot {snapshot_id} with {len(data.get('data', []))} stocks at {fetch_time.strftime('%H:%M:%S')}")
         except Exception as e:
@@ -333,14 +333,44 @@ def store_oi_data_async(data, fetch_time, processing_time_ms=0, db_enabled=True)
 def update_database_stats():
     """Update database statistics in session state"""
     try:
-        st.session_state.db_stats = oi_db.get_database_stats()
+        st.session_state.db_stats = financial_db.get_database_stats()
     except Exception as e:
         print(f"Error updating database stats: {e}")
+
+def store_daily_gainers_data_async(data, fetch_time, processing_time_ms=0, db_enabled=True):
+    """Store Daily Gainers data in SQLite database asynchronously"""
+    def store_data():
+        try:
+            if db_enabled and data:
+                snapshot_id = financial_db.store_daily_gainers_snapshot(data, fetch_time, processing_time_ms)
+                if snapshot_id:
+                    print(f"Stored Daily Gainers snapshot {snapshot_id} with {len(data.get('data', []))} stocks at {fetch_time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"Error storing daily gainers data asynchronously: {e}")
+    
+    # Run in background thread to not block UI
+    thread = threading.Thread(target=store_data, daemon=True)
+    thread.start()
+
+def store_daily_losers_data_async(data, fetch_time, processing_time_ms=0, db_enabled=True):
+    """Store Daily Losers data in SQLite database asynchronously"""
+    def store_data():
+        try:
+            if db_enabled and data:
+                snapshot_id = financial_db.store_daily_losers_snapshot(data, fetch_time, processing_time_ms)
+                if snapshot_id:
+                    print(f"Stored Daily Losers snapshot {snapshot_id} with {len(data.get('data', []))} stocks at {fetch_time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"Error storing daily losers data asynchronously: {e}")
+    
+    # Run in background thread to not block UI
+    thread = threading.Thread(target=store_data, daemon=True)
+    thread.start()
 
 def get_historical_snapshot(target_time):
     """Get historical snapshot data for a specific time"""
     try:
-        snapshot_data = oi_db.get_snapshot_at_time(target_time)
+        snapshot_data = financial_db.get_snapshot_at_time(target_time)
         if snapshot_data:
             # Convert to DataFrame format similar to current data processing
             stocks = snapshot_data.get('stocks', [])
@@ -358,7 +388,7 @@ def get_intraday_timeline_data(date=None):
     try:
         if date is None:
             date = datetime.now()
-        timeline = oi_db.get_intraday_timeline(date)
+        timeline = financial_db.get_intraday_timeline(date)
         return timeline
     except Exception as e:
         st.error(f"Error retrieving timeline data: {e}")
@@ -369,10 +399,64 @@ def get_peak_activity_data(date=None, limit=10):
     try:
         if date is None:
             date = datetime.now()
-        peaks = oi_db.get_peak_activity_times(date, limit)
+        peaks = financial_db.get_peak_activity_times(date, limit)
         return peaks
     except Exception as e:
         st.error(f"Error retrieving peak activity data: {e}")
+        return []
+
+def get_daily_gainers_historical_snapshot(target_time):
+    """Get historical Daily Gainers snapshot data for a specific time"""
+    try:
+        snapshot_data = financial_db.get_daily_gainers_snapshot_at_time(target_time)
+        if snapshot_data:
+            # Convert to DataFrame format similar to current data processing
+            stocks = snapshot_data.get('stocks', [])
+            if stocks:
+                df = pd.DataFrame(stocks)
+                df['timestamp'] = snapshot_data['snapshot_time']
+                return df, snapshot_data
+        return pd.DataFrame(), None
+    except Exception as e:
+        st.error(f"Error retrieving Daily Gainers historical data: {e}")
+        return pd.DataFrame(), None
+
+def get_daily_losers_historical_snapshot(target_time):
+    """Get historical Daily Losers snapshot data for a specific time"""
+    try:
+        snapshot_data = financial_db.get_daily_losers_snapshot_at_time(target_time)
+        if snapshot_data:
+            # Convert to DataFrame format similar to current data processing
+            stocks = snapshot_data.get('stocks', [])
+            if stocks:
+                df = pd.DataFrame(stocks)
+                df['timestamp'] = snapshot_data['snapshot_time']
+                return df, snapshot_data
+        return pd.DataFrame(), None
+    except Exception as e:
+        st.error(f"Error retrieving Daily Losers historical data: {e}")
+        return pd.DataFrame(), None
+
+def get_daily_gainers_timeline_data(date=None):
+    """Get Daily Gainers timeline data for a specific date"""
+    try:
+        if date is None:
+            date = datetime.now()
+        timeline = financial_db.get_daily_gainers_timeline(date)
+        return timeline
+    except Exception as e:
+        st.error(f"Error retrieving Daily Gainers timeline data: {e}")
+        return []
+
+def get_daily_losers_timeline_data(date=None):
+    """Get Daily Losers timeline data for a specific date"""
+    try:
+        if date is None:
+            date = datetime.now()
+        timeline = financial_db.get_daily_losers_timeline(date)
+        return timeline
+    except Exception as e:
+        st.error(f"Error retrieving Daily Losers timeline data: {e}")
         return []
 
 #old one
@@ -663,6 +747,15 @@ def fetch_daily_gainers():
         
         if response.status_code == 200:
             data = response.json()
+            
+            # Store data in SQLite database asynchronously
+            fetch_time = datetime.now()
+            processing_start = time.time()
+            processing_time_ms = int((time.time() - processing_start) * 1000)
+            
+            # Store in database asynchronously
+            store_daily_gainers_data_async(data, fetch_time, processing_time_ms, st.session_state.get('db_storage_enabled', True))
+            
             return data, None
         else:
             return None, f"HTTP Error: {response.status_code}"
@@ -703,6 +796,15 @@ def fetch_daily_losers():
         
         if response.status_code == 200:
             data = response.json()
+            
+            # Store data in SQLite database asynchronously
+            fetch_time = datetime.now()
+            processing_start = time.time()
+            processing_time_ms = int((time.time() - processing_start) * 1000)
+            
+            # Store in database asynchronously
+            store_daily_losers_data_async(data, fetch_time, processing_time_ms, st.session_state.get('db_storage_enabled', True))
+            
             return data, None
         else:
             return None, f"HTTP Error: {response.status_code}"
@@ -1278,7 +1380,7 @@ def show_historical_data_view():
                 st.metric("Data Range", f"{earliest} - {latest}")
     
     # Tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Intraday Timeline", "🎯 Specific Time Lookup", "⚡ Peak Activity", "📋 Data Export"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 OI Spurts Timeline", "🚀 Daily Gainers", "📉 Daily Losers", "🎯 Specific Time Lookup", "⚡ Peak Activity", "📋 Data Export"])
     
     with tab1:
         st.subheader("Intraday Stock Count Timeline")
@@ -1333,8 +1435,123 @@ def show_historical_data_view():
                     st.info(f"No data available for {selected_date}")
     
     with tab2:
+        st.subheader("Daily Gainers Timeline")
+        
+        # Date selector
+        gainers_date = st.date_input(
+            "Select Date for Gainers Timeline",
+            value=datetime.now().date(),
+            max_value=datetime.now().date(),
+            key="gainers_timeline_date"
+        )
+        
+        if st.button("Load Gainers Timeline", type="primary", key="load_gainers_timeline"):
+            with st.spinner("Loading Daily Gainers timeline data..."):
+                timeline_data = get_daily_gainers_timeline_data(datetime.combine(gainers_date, datetime.min.time()))
+                
+                if timeline_data:
+                    # Convert to DataFrame for plotting
+                    timeline_df = pd.DataFrame(timeline_data)
+                    timeline_df['time'] = pd.to_datetime(timeline_df['time'])
+                    timeline_df['time_str'] = timeline_df['time'].dt.strftime('%H:%M')
+                    
+                    # Plot timeline
+                    fig = px.line(
+                        timeline_df,
+                        x='time_str',
+                        y='total_stocks',
+                        title=f"Daily Gainers Count Timeline for {gainers_date}",
+                        labels={'time_str': 'Time', 'total_stocks': 'Number of Gainers'},
+                        markers=True,
+                        color_discrete_sequence=['green']
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show data table
+                    st.subheader("Gainers Timeline Data")
+                    display_df = timeline_df[['time_str', 'total_stocks']].copy()
+                    display_df.columns = ['Time', 'Gainers Count']
+                    st.dataframe(display_df, use_container_width=True)
+                    
+                    # Summary statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Max Gainers", timeline_df['total_stocks'].max())
+                    with col2:
+                        st.metric("Min Gainers", timeline_df['total_stocks'].min())
+                    with col3:
+                        st.metric("Avg Gainers", f"{timeline_df['total_stocks'].mean():.1f}")
+                    with col4:
+                        peak_time = timeline_df.loc[timeline_df['total_stocks'].idxmax(), 'time_str']
+                        st.metric("Peak Time", peak_time)
+                else:
+                    st.info(f"No Daily Gainers data available for {gainers_date}")
+    
+    with tab3:
+        st.subheader("Daily Losers Timeline")
+        
+        # Date selector
+        losers_date = st.date_input(
+            "Select Date for Losers Timeline",
+            value=datetime.now().date(),
+            max_value=datetime.now().date(),
+            key="losers_timeline_date"
+        )
+        
+        if st.button("Load Losers Timeline", type="primary", key="load_losers_timeline"):
+            with st.spinner("Loading Daily Losers timeline data..."):
+                timeline_data = get_daily_losers_timeline_data(datetime.combine(losers_date, datetime.min.time()))
+                
+                if timeline_data:
+                    # Convert to DataFrame for plotting
+                    timeline_df = pd.DataFrame(timeline_data)
+                    timeline_df['time'] = pd.to_datetime(timeline_df['time'])
+                    timeline_df['time_str'] = timeline_df['time'].dt.strftime('%H:%M')
+                    
+                    # Plot timeline
+                    fig = px.line(
+                        timeline_df,
+                        x='time_str',
+                        y='total_stocks',
+                        title=f"Daily Losers Count Timeline for {losers_date}",
+                        labels={'time_str': 'Time', 'total_stocks': 'Number of Losers'},
+                        markers=True,
+                        color_discrete_sequence=['red']
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show data table
+                    st.subheader("Losers Timeline Data")
+                    display_df = timeline_df[['time_str', 'total_stocks']].copy()
+                    display_df.columns = ['Time', 'Losers Count']
+                    st.dataframe(display_df, use_container_width=True)
+                    
+                    # Summary statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Max Losers", timeline_df['total_stocks'].max())
+                    with col2:
+                        st.metric("Min Losers", timeline_df['total_stocks'].min())
+                    with col3:
+                        st.metric("Avg Losers", f"{timeline_df['total_stocks'].mean():.1f}")
+                    with col4:
+                        peak_time = timeline_df.loc[timeline_df['total_stocks'].idxmax(), 'time_str']
+                        st.metric("Peak Time", peak_time)
+                else:
+                    st.info(f"No Daily Losers data available for {losers_date}")
+    
+    with tab4:
         st.subheader("Specific Time Lookup")
-        st.write("Find out exactly what stocks were in OI spurts at a specific time")
+        st.write("Find out exactly what stocks were present at a specific time")
+        
+        # Data type selector
+        data_type = st.selectbox(
+            "Select Data Type",
+            ["OI Spurts", "Daily Gainers", "Daily Losers"],
+            key="lookup_data_type"
+        )
         
         col1, col2 = st.columns(2)
         with col1:
@@ -1355,11 +1572,16 @@ def show_historical_data_view():
         if st.button("🔍 Lookup Data", type="primary"):
             target_datetime = datetime.combine(lookup_date, lookup_time)
             
-            with st.spinner(f"Looking up data for {target_datetime.strftime('%Y-%m-%d %H:%M')}..."):
-                df, snapshot_data = get_historical_snapshot(target_datetime)
+            with st.spinner(f"Looking up {data_type} data for {target_datetime.strftime('%Y-%m-%d %H:%M')}..."):
+                if data_type == "OI Spurts":
+                    df, snapshot_data = get_historical_snapshot(target_datetime)
+                elif data_type == "Daily Gainers":
+                    df, snapshot_data = get_daily_gainers_historical_snapshot(target_datetime)
+                else:  # Daily Losers
+                    df, snapshot_data = get_daily_losers_historical_snapshot(target_datetime)
                 
                 if not df.empty and snapshot_data:
-                    st.success(f"Found data closest to {target_datetime.strftime('%H:%M')}")
+                    st.success(f"Found {data_type} data closest to {target_datetime.strftime('%H:%M')}")
                     
                     # Show snapshot info
                     actual_time = datetime.fromisoformat(snapshot_data['snapshot_time']).strftime('%H:%M:%S')
@@ -1374,13 +1596,13 @@ def show_historical_data_view():
                         st.metric("Time Difference", f"{time_diff:.0f}s")
                     
                     # Show stocks data
-                    st.subheader(f"Stocks in OI Spurts at {actual_time}")
+                    st.subheader(f"{data_type} at {actual_time}")
                     st.dataframe(df, use_container_width=True, height=400)
                     
                 else:
-                    st.warning(f"No data found near {target_datetime.strftime('%Y-%m-%d %H:%M')}")
+                    st.warning(f"No {data_type} data found near {target_datetime.strftime('%Y-%m-%d %H:%M')}")
     
-    with tab3:
+    with tab5:
         st.subheader("Peak Activity Analysis")
         st.write("Find times with highest stock counts")
         
@@ -1423,7 +1645,7 @@ def show_historical_data_view():
                 else:
                     st.info(f"No peak activity data available for {peak_date}")
     
-    with tab4:
+    with tab6:
         st.subheader("Data Export")
         st.write("Export historical data for external analysis")
         
@@ -1610,8 +1832,31 @@ def main():
     # Database status
     if st.session_state.db_stats:
         stats = st.session_state.db_stats
-        st.sidebar.metric("Total Snapshots", stats.get('total_snapshots', 0))
-        st.sidebar.metric("DB Size (MB)", stats.get('database_size_mb', 0))
+        
+        # Overall stats
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            st.metric("Total Snapshots", stats.get('total_snapshots', 0))
+        with col2:
+            st.metric("DB Size (MB)", stats.get('database_size_mb', 0))
+        
+        # Detailed breakdown
+        st.sidebar.markdown("**📊 Data Breakdown:**")
+        
+        # OI Spurts
+        oi_snaps = stats.get('oi_snapshots', 0)
+        oi_records = stats.get('oi_records', 0)
+        st.sidebar.write(f"📈 OI Spurts: {oi_snaps} snapshots, {oi_records} records")
+        
+        # Daily Gainers
+        gainers_snaps = stats.get('gainers_snapshots', 0)
+        gainers_records = stats.get('gainers_records', 0)
+        st.sidebar.write(f"🚀 Gainers: {gainers_snaps} snapshots, {gainers_records} records")
+        
+        # Daily Losers
+        losers_snaps = stats.get('losers_snapshots', 0)
+        losers_records = stats.get('losers_records', 0)
+        st.sidebar.write(f"📉 Losers: {losers_snaps} snapshots, {losers_records} records")
     
     # Database toggle
     db_enabled = st.sidebar.checkbox(
@@ -1789,7 +2034,10 @@ def main():
                 st.error(f"Error fetching gainers data: {error}")
                 status_placeholder.error("❌ Failed")
             else:
-                status_placeholder.success("✅ Success")
+                if st.session_state.db_storage_enabled:
+                    status_placeholder.success("✅ Success (Stored in DB)")
+                else:
+                    status_placeholder.success("✅ Success")
                 st.session_state.gainers_last_update = datetime.now()
                 
                 # Process and display data
@@ -1811,7 +2059,10 @@ def main():
                         if len(df) > 0:
                             symbols_placeholder.metric("Gainers", len(df))
                             current_time = datetime.now().strftime("%H:%M:%S")
-                            updated_placeholder.metric("Updated", current_time)
+                            if st.session_state.db_storage_enabled:
+                                updated_placeholder.metric("Updated", f"{current_time} 💾")
+                            else:
+                                updated_placeholder.metric("Updated", current_time)
                         
                         # Display current data
                         with data_placeholder.container():
@@ -1858,7 +2109,10 @@ def main():
                 st.error(f"Error fetching losers data: {error}")
                 status_placeholder.error("❌ Failed")
             else:
-                status_placeholder.success("✅ Success")
+                if st.session_state.db_storage_enabled:
+                    status_placeholder.success("✅ Success (Stored in DB)")
+                else:
+                    status_placeholder.success("✅ Success")
                 st.session_state.losers_last_update = datetime.now()
                 
                 # Process and display data
@@ -1880,7 +2134,10 @@ def main():
                         if len(df) > 0:
                             symbols_placeholder.metric("Losers", len(df))
                             current_time = datetime.now().strftime("%H:%M:%S")
-                            updated_placeholder.metric("Updated", current_time)
+                            if st.session_state.db_storage_enabled:
+                                updated_placeholder.metric("Updated", f"{current_time} 💾")
+                            else:
+                                updated_placeholder.metric("Updated", current_time)
                         
                         # Display current data
                         with data_placeholder.container():

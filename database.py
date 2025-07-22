@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from typing import List, Dict, Optional, Tuple
 import os
 
-class OISpurtsDatabase:
-    """Database manager for OI Spurts data with snapshot-based storage"""
+class FinancialDataDatabase:
+    """Database manager for Financial Market data with snapshot-based storage"""
     
     def __init__(self, db_path: str = "oi_spurts_data.db"):
         self.db_path = db_path
@@ -76,7 +76,7 @@ class OISpurtsDatabase:
                 )
             """)
             
-            # Create individual stock data table
+            # Create individual stock data table for OI Spurts
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS oi_snapshot_details (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,20 +91,110 @@ class OISpurtsDatabase:
                 )
             """)
             
-            # Create indexes for performance
+            # Create Daily Gainers snapshots table
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_snapshot_time 
+                CREATE TABLE IF NOT EXISTS daily_gainers_snapshots (
+                    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_time DATETIME NOT NULL,
+                    total_stocks INTEGER NOT NULL,
+                    api_fetch_time DATETIME NOT NULL,
+                    processing_time_ms INTEGER,
+                    raw_data_json TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create Daily Gainers stock details table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_gainers_details (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL,
+                    company_name TEXT,
+                    ltp REAL,
+                    change_value REAL,
+                    change_percent REAL,
+                    volume INTEGER,
+                    turnover REAL,
+                    FOREIGN KEY (snapshot_id) REFERENCES daily_gainers_snapshots(snapshot_id)
+                )
+            """)
+            
+            # Create Daily Losers snapshots table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_losers_snapshots (
+                    snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_time DATETIME NOT NULL,
+                    total_stocks INTEGER NOT NULL,
+                    api_fetch_time DATETIME NOT NULL,
+                    processing_time_ms INTEGER,
+                    raw_data_json TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create Daily Losers stock details table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_losers_details (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_id INTEGER NOT NULL,
+                    symbol TEXT NOT NULL,
+                    company_name TEXT,
+                    ltp REAL,
+                    change_value REAL,
+                    change_percent REAL,
+                    volume INTEGER,
+                    turnover REAL,
+                    FOREIGN KEY (snapshot_id) REFERENCES daily_losers_snapshots(snapshot_id)
+                )
+            """)
+            
+            # Create indexes for performance - OI Spurts
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_oi_snapshot_time 
                 ON oi_snapshots(snapshot_time)
             """)
             
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_symbol_snapshot 
+                CREATE INDEX IF NOT EXISTS idx_oi_symbol_snapshot 
                 ON oi_snapshot_details(symbol, snapshot_id)
             """)
             
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_snapshot_details_id 
+                CREATE INDEX IF NOT EXISTS idx_oi_snapshot_details_id 
                 ON oi_snapshot_details(snapshot_id)
+            """)
+            
+            # Create indexes for Daily Gainers
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_gainers_snapshot_time 
+                ON daily_gainers_snapshots(snapshot_time)
+            """)
+            
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_gainers_symbol_snapshot 
+                ON daily_gainers_details(symbol, snapshot_id)
+            """)
+            
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_gainers_details_id 
+                ON daily_gainers_details(snapshot_id)
+            """)
+            
+            # Create indexes for Daily Losers
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_losers_snapshot_time 
+                ON daily_losers_snapshots(snapshot_time)
+            """)
+            
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_losers_symbol_snapshot 
+                ON daily_losers_details(symbol, snapshot_id)
+            """)
+            
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_losers_details_id 
+                ON daily_losers_details(snapshot_id)
             """)
             
             conn.commit()
@@ -196,6 +286,132 @@ class OISpurtsDatabase:
             print(f"Error storing snapshot: {e}")
             return None
     
+    def store_daily_gainers_snapshot(self, data: Dict, fetch_time: datetime, processing_time_ms: int = 0) -> Optional[int]:
+        """
+        Store a complete Daily Gainers snapshot
+        
+        Args:
+            data: Raw API response data from Daily Gainers
+            fetch_time: When the API was called
+            processing_time_ms: Time taken to process the data
+            
+        Returns:
+            snapshot_id if successful, None if failed
+        """
+        try:
+            with self.lock:
+                with self.get_connection() as conn:
+                    # Extract data from API response
+                    stocks_data = data.get('data', []) if data else []
+                    total_stocks = len(stocks_data)
+                    snapshot_time = fetch_time
+                    
+                    # Insert snapshot metadata
+                    cursor = conn.execute("""
+                        INSERT INTO daily_gainers_snapshots 
+                        (snapshot_time, total_stocks, api_fetch_time, processing_time_ms, raw_data_json)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        snapshot_time,
+                        total_stocks,
+                        fetch_time,
+                        processing_time_ms,
+                        json.dumps(data) if data else None
+                    ))
+                    
+                    snapshot_id = cursor.lastrowid
+                    
+                    # Insert individual stock details
+                    if stocks_data:
+                        stock_records = []
+                        for stock in stocks_data:
+                            stock_records.append((
+                                snapshot_id,
+                                stock.get('sym', ''),  # symbol
+                                stock.get('disp', ''),  # company name
+                                stock.get('ltp'),  # last traded price
+                                stock.get('chng'),  # change value
+                                stock.get('pchng'),  # percentage change
+                                stock.get('tvol'),  # volume
+                                stock.get('tval')  # turnover
+                            ))
+                        
+                        conn.executemany("""
+                            INSERT INTO daily_gainers_details 
+                            (snapshot_id, symbol, company_name, ltp, change_value, change_percent, volume, turnover)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, stock_records)
+                    
+                    conn.commit()
+                    return snapshot_id
+                    
+        except Exception as e:
+            print(f"Error storing daily gainers snapshot: {e}")
+            return None
+    
+    def store_daily_losers_snapshot(self, data: Dict, fetch_time: datetime, processing_time_ms: int = 0) -> Optional[int]:
+        """
+        Store a complete Daily Losers snapshot
+        
+        Args:
+            data: Raw API response data from Daily Losers
+            fetch_time: When the API was called
+            processing_time_ms: Time taken to process the data
+            
+        Returns:
+            snapshot_id if successful, None if failed
+        """
+        try:
+            with self.lock:
+                with self.get_connection() as conn:
+                    # Extract data from API response
+                    stocks_data = data.get('data', []) if data else []
+                    total_stocks = len(stocks_data)
+                    snapshot_time = fetch_time
+                    
+                    # Insert snapshot metadata
+                    cursor = conn.execute("""
+                        INSERT INTO daily_losers_snapshots 
+                        (snapshot_time, total_stocks, api_fetch_time, processing_time_ms, raw_data_json)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        snapshot_time,
+                        total_stocks,
+                        fetch_time,
+                        processing_time_ms,
+                        json.dumps(data) if data else None
+                    ))
+                    
+                    snapshot_id = cursor.lastrowid
+                    
+                    # Insert individual stock details
+                    if stocks_data:
+                        stock_records = []
+                        for stock in stocks_data:
+                            stock_records.append((
+                                snapshot_id,
+                                stock.get('sym', ''),  # symbol
+                                stock.get('disp', ''),  # company name
+                                stock.get('ltp'),  # last traded price
+                                stock.get('chng'),  # change value
+                                stock.get('pchng'),  # percentage change
+                                stock.get('tvol'),  # volume
+                                stock.get('tval')  # turnover
+                            ))
+                        
+                        conn.executemany("""
+                            INSERT INTO daily_losers_details 
+                            (snapshot_id, symbol, company_name, ltp, change_value, change_percent, volume, turnover)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, stock_records)
+                    
+                    conn.commit()
+                    return snapshot_id
+                    
+        except Exception as e:
+            print(f"Error storing daily losers snapshot: {e}")
+            return None
+    
     def get_snapshot_at_time(self, target_time: datetime) -> Optional[Dict]:
         """
         Get the snapshot closest to the target time
@@ -256,6 +472,112 @@ class OISpurtsDatabase:
             print(f"Error getting snapshot at time: {e}")
             return None
     
+    def get_daily_gainers_snapshot_at_time(self, target_time: datetime) -> Optional[Dict]:
+        """Get Daily Gainers snapshot closest to the target time"""
+        try:
+            with self.get_connection() as conn:
+                # Find closest snapshot
+                cursor = conn.execute("""
+                    SELECT snapshot_id, snapshot_time, total_stocks, api_fetch_time
+                    FROM daily_gainers_snapshots 
+                    WHERE ABS(julianday(snapshot_time) - julianday(?)) = (
+                        SELECT MIN(ABS(julianday(snapshot_time) - julianday(?)))
+                        FROM daily_gainers_snapshots
+                    )
+                    LIMIT 1
+                """, (target_time, target_time))
+                
+                snapshot_row = cursor.fetchone()
+                if not snapshot_row:
+                    return None
+                
+                snapshot_id, snapshot_time, total_stocks, api_fetch_time = snapshot_row
+                
+                # Get stock details for this snapshot
+                cursor = conn.execute("""
+                    SELECT symbol, company_name, ltp, change_value, change_percent, volume, turnover
+                    FROM daily_gainers_details 
+                    WHERE snapshot_id = ?
+                    ORDER BY change_percent DESC
+                """, (snapshot_id,))
+                
+                stocks = []
+                for row in cursor.fetchall():
+                    stocks.append({
+                        'symbol': row[0],
+                        'company_name': row[1],
+                        'ltp': row[2],
+                        'change_value': row[3],
+                        'change_percent': row[4],
+                        'volume': row[5],
+                        'turnover': row[6]
+                    })
+                
+                return {
+                    'snapshot_id': snapshot_id,
+                    'snapshot_time': snapshot_time,
+                    'total_stocks': total_stocks,
+                    'api_fetch_time': api_fetch_time,
+                    'stocks': stocks
+                }
+                
+        except Exception as e:
+            print(f"Error getting daily gainers snapshot at time: {e}")
+            return None
+    
+    def get_daily_losers_snapshot_at_time(self, target_time: datetime) -> Optional[Dict]:
+        """Get Daily Losers snapshot closest to the target time"""
+        try:
+            with self.get_connection() as conn:
+                # Find closest snapshot
+                cursor = conn.execute("""
+                    SELECT snapshot_id, snapshot_time, total_stocks, api_fetch_time
+                    FROM daily_losers_snapshots 
+                    WHERE ABS(julianday(snapshot_time) - julianday(?)) = (
+                        SELECT MIN(ABS(julianday(snapshot_time) - julianday(?)))
+                        FROM daily_losers_snapshots
+                    )
+                    LIMIT 1
+                """, (target_time, target_time))
+                
+                snapshot_row = cursor.fetchone()
+                if not snapshot_row:
+                    return None
+                
+                snapshot_id, snapshot_time, total_stocks, api_fetch_time = snapshot_row
+                
+                # Get stock details for this snapshot
+                cursor = conn.execute("""
+                    SELECT symbol, company_name, ltp, change_value, change_percent, volume, turnover
+                    FROM daily_losers_details 
+                    WHERE snapshot_id = ?
+                    ORDER BY change_percent ASC
+                """, (snapshot_id,))
+                
+                stocks = []
+                for row in cursor.fetchall():
+                    stocks.append({
+                        'symbol': row[0],
+                        'company_name': row[1],
+                        'ltp': row[2],
+                        'change_value': row[3],
+                        'change_percent': row[4],
+                        'volume': row[5],
+                        'turnover': row[6]
+                    })
+                
+                return {
+                    'snapshot_id': snapshot_id,
+                    'snapshot_time': snapshot_time,
+                    'total_stocks': total_stocks,
+                    'api_fetch_time': api_fetch_time,
+                    'stocks': stocks
+                }
+                
+        except Exception as e:
+            print(f"Error getting daily losers snapshot at time: {e}")
+            return None
+    
     def get_intraday_timeline(self, date: datetime) -> List[Dict]:
         """
         Get timeline of stock counts throughout a trading day
@@ -287,6 +609,56 @@ class OISpurtsDatabase:
                 
         except Exception as e:
             print(f"Error getting intraday timeline: {e}")
+            return []
+    
+    def get_daily_gainers_timeline(self, date: datetime) -> List[Dict]:
+        """Get timeline of Daily Gainers stock counts throughout a trading day"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT snapshot_time, total_stocks, snapshot_id
+                    FROM daily_gainers_snapshots 
+                    WHERE DATE(snapshot_time) = DATE(?)
+                    ORDER BY snapshot_time
+                """, (date,))
+                
+                timeline = []
+                for row in cursor.fetchall():
+                    timeline.append({
+                        'time': row[0],
+                        'total_stocks': row[1],
+                        'snapshot_id': row[2]
+                    })
+                
+                return timeline
+                
+        except Exception as e:
+            print(f"Error getting daily gainers timeline: {e}")
+            return []
+    
+    def get_daily_losers_timeline(self, date: datetime) -> List[Dict]:
+        """Get timeline of Daily Losers stock counts throughout a trading day"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.execute("""
+                    SELECT snapshot_time, total_stocks, snapshot_id
+                    FROM daily_losers_snapshots 
+                    WHERE DATE(snapshot_time) = DATE(?)
+                    ORDER BY snapshot_time
+                """, (date,))
+                
+                timeline = []
+                for row in cursor.fetchall():
+                    timeline.append({
+                        'time': row[0],
+                        'total_stocks': row[1],
+                        'snapshot_id': row[2]
+                    })
+                
+                return timeline
+                
+        except Exception as e:
+            print(f"Error getting daily losers timeline: {e}")
             return []
     
     def get_peak_activity_times(self, date: datetime, limit: int = 10) -> List[Dict]:
@@ -363,7 +735,7 @@ class OISpurtsDatabase:
             
             with self.lock:
                 with self.get_connection() as conn:
-                    # Delete old snapshot details first (foreign key constraint)
+                    # Delete old OI snapshot details first (foreign key constraint)
                     cursor = conn.execute("""
                         DELETE FROM oi_snapshot_details 
                         WHERE snapshot_id IN (
@@ -371,40 +743,96 @@ class OISpurtsDatabase:
                             WHERE snapshot_time < ?
                         )
                     """, (cutoff_date,))
+                    oi_details_deleted = cursor.rowcount
                     
-                    details_deleted = cursor.rowcount
-                    
-                    # Delete old snapshots
+                    # Delete old OI snapshots
                     cursor = conn.execute("""
                         DELETE FROM oi_snapshots 
                         WHERE snapshot_time < ?
                     """, (cutoff_date,))
+                    oi_snapshots_deleted = cursor.rowcount
                     
-                    snapshots_deleted = cursor.rowcount
+                    # Delete old Daily Gainers details
+                    cursor = conn.execute("""
+                        DELETE FROM daily_gainers_details 
+                        WHERE snapshot_id IN (
+                            SELECT snapshot_id FROM daily_gainers_snapshots 
+                            WHERE snapshot_time < ?
+                        )
+                    """, (cutoff_date,))
+                    gainers_details_deleted = cursor.rowcount
+                    
+                    # Delete old Daily Gainers snapshots
+                    cursor = conn.execute("""
+                        DELETE FROM daily_gainers_snapshots 
+                        WHERE snapshot_time < ?
+                    """, (cutoff_date,))
+                    gainers_snapshots_deleted = cursor.rowcount
+                    
+                    # Delete old Daily Losers details
+                    cursor = conn.execute("""
+                        DELETE FROM daily_losers_details 
+                        WHERE snapshot_id IN (
+                            SELECT snapshot_id FROM daily_losers_snapshots 
+                            WHERE snapshot_time < ?
+                        )
+                    """, (cutoff_date,))
+                    losers_details_deleted = cursor.rowcount
+                    
+                    # Delete old Daily Losers snapshots
+                    cursor = conn.execute("""
+                        DELETE FROM daily_losers_snapshots 
+                        WHERE snapshot_time < ?
+                    """, (cutoff_date,))
+                    losers_snapshots_deleted = cursor.rowcount
                     
                     conn.commit()
                     
-                    print(f"Cleanup completed: {snapshots_deleted} snapshots and {details_deleted} detail records deleted")
+                    total_snapshots = oi_snapshots_deleted + gainers_snapshots_deleted + losers_snapshots_deleted
+                    total_details = oi_details_deleted + gainers_details_deleted + losers_details_deleted
+                    
+                    print(f"Cleanup completed: {total_snapshots} snapshots and {total_details} detail records deleted")
+                    print(f"  OI: {oi_snapshots_deleted} snapshots, {oi_details_deleted} details")
+                    print(f"  Gainers: {gainers_snapshots_deleted} snapshots, {gainers_details_deleted} details")
+                    print(f"  Losers: {losers_snapshots_deleted} snapshots, {losers_details_deleted} details")
                     
         except Exception as e:
             print(f"Error during cleanup: {e}")
     
     def get_database_stats(self) -> Dict:
-        """Get database statistics"""
+        """Get comprehensive database statistics"""
         try:
             with self.get_connection() as conn:
-                # Get total snapshots
+                # Get OI snapshots and records
                 cursor = conn.execute("SELECT COUNT(*) FROM oi_snapshots")
-                total_snapshots = cursor.fetchone()[0]
+                oi_snapshots = cursor.fetchone()[0]
                 
-                # Get total stock records
                 cursor = conn.execute("SELECT COUNT(*) FROM oi_snapshot_details")
-                total_stock_records = cursor.fetchone()[0]
+                oi_records = cursor.fetchone()[0]
                 
-                # Get date range
+                # Get Daily Gainers snapshots and records
+                cursor = conn.execute("SELECT COUNT(*) FROM daily_gainers_snapshots")
+                gainers_snapshots = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM daily_gainers_details")
+                gainers_records = cursor.fetchone()[0]
+                
+                # Get Daily Losers snapshots and records
+                cursor = conn.execute("SELECT COUNT(*) FROM daily_losers_snapshots")
+                losers_snapshots = cursor.fetchone()[0]
+                
+                cursor = conn.execute("SELECT COUNT(*) FROM daily_losers_details")
+                losers_records = cursor.fetchone()[0]
+                
+                # Get overall date range (from all tables)
                 cursor = conn.execute("""
-                    SELECT MIN(snapshot_time), MAX(snapshot_time) 
-                    FROM oi_snapshots
+                    SELECT MIN(earliest), MAX(latest) FROM (
+                        SELECT MIN(snapshot_time) as earliest, MAX(snapshot_time) as latest FROM oi_snapshots
+                        UNION ALL
+                        SELECT MIN(snapshot_time) as earliest, MAX(snapshot_time) as latest FROM daily_gainers_snapshots
+                        UNION ALL
+                        SELECT MIN(snapshot_time) as earliest, MAX(snapshot_time) as latest FROM daily_losers_snapshots
+                    )
                 """)
                 date_range = cursor.fetchone()
                 
@@ -412,8 +840,14 @@ class OISpurtsDatabase:
                 db_size_mb = os.path.getsize(self.db_path) / (1024 * 1024) if os.path.exists(self.db_path) else 0
                 
                 return {
-                    'total_snapshots': total_snapshots,
-                    'total_stock_records': total_stock_records,
+                    'total_snapshots': oi_snapshots + gainers_snapshots + losers_snapshots,
+                    'total_stock_records': oi_records + gainers_records + losers_records,
+                    'oi_snapshots': oi_snapshots,
+                    'oi_records': oi_records,
+                    'gainers_snapshots': gainers_snapshots,
+                    'gainers_records': gainers_records,
+                    'losers_snapshots': losers_snapshots,
+                    'losers_records': losers_records,
                     'earliest_data': date_range[0],
                     'latest_data': date_range[1],
                     'database_size_mb': round(db_size_mb, 2)
@@ -424,4 +858,4 @@ class OISpurtsDatabase:
             return {}
 
 # Global database instance
-oi_db = OISpurtsDatabase()
+financial_db = FinancialDataDatabase()
