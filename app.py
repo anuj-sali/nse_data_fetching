@@ -12,6 +12,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from dotenv import load_dotenv,find_dotenv
 from http.cookies import SimpleCookie
+from database import oi_db
+import threading
 
 # Load environment variables
 load_dotenv(find_dotenv())
@@ -71,6 +73,15 @@ if 'oi_based_shortlist_data_history' not in st.session_state:
     st.session_state.oi_based_shortlist_data_history = []
 if 'oi_based_shortlist_last_update' not in st.session_state:
     st.session_state.oi_based_shortlist_last_update = None
+# Database-related session state
+if 'db_storage_enabled' not in st.session_state:
+    st.session_state.db_storage_enabled = True
+if 'last_snapshot_id' not in st.session_state:
+    st.session_state.last_snapshot_id = None
+if 'db_stats' not in st.session_state:
+    st.session_state.db_stats = {}
+if 'show_historical_view' not in st.session_state:
+    st.session_state.show_historical_view = False
 # Session management for scrapers
 if 'nse_scraper' not in st.session_state:
     st.session_state.nse_scraper = None
@@ -304,6 +315,66 @@ def refresh_buildup_session():
     st.session_state.buildup_data = None  # Clear cached data
     return create_buildup_session()
 
+def store_oi_data_async(data, fetch_time, processing_time_ms=0, db_enabled=True):
+    """Store OI data in SQLite database asynchronously"""
+    def store_data():
+        try:
+            if db_enabled and data:
+                snapshot_id = oi_db.store_snapshot(data, fetch_time, processing_time_ms)
+                if snapshot_id:
+                    print(f"Stored snapshot {snapshot_id} with {len(data.get('data', []))} stocks at {fetch_time.strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"Error storing data asynchronously: {e}")
+    
+    # Run in background thread to not block UI
+    thread = threading.Thread(target=store_data, daemon=True)
+    thread.start()
+
+def update_database_stats():
+    """Update database statistics in session state"""
+    try:
+        st.session_state.db_stats = oi_db.get_database_stats()
+    except Exception as e:
+        print(f"Error updating database stats: {e}")
+
+def get_historical_snapshot(target_time):
+    """Get historical snapshot data for a specific time"""
+    try:
+        snapshot_data = oi_db.get_snapshot_at_time(target_time)
+        if snapshot_data:
+            # Convert to DataFrame format similar to current data processing
+            stocks = snapshot_data.get('stocks', [])
+            if stocks:
+                df = pd.DataFrame(stocks)
+                df['timestamp'] = snapshot_data['snapshot_time']
+                return df, snapshot_data
+        return pd.DataFrame(), None
+    except Exception as e:
+        st.error(f"Error retrieving historical data: {e}")
+        return pd.DataFrame(), None
+
+def get_intraday_timeline_data(date=None):
+    """Get timeline data for a specific date"""
+    try:
+        if date is None:
+            date = datetime.now()
+        timeline = oi_db.get_intraday_timeline(date)
+        return timeline
+    except Exception as e:
+        st.error(f"Error retrieving timeline data: {e}")
+        return []
+
+def get_peak_activity_data(date=None, limit=10):
+    """Get peak activity times for a specific date"""
+    try:
+        if date is None:
+            date = datetime.now()
+        peaks = oi_db.get_peak_activity_times(date, limit)
+        return peaks
+    except Exception as e:
+        st.error(f"Error retrieving peak activity data: {e}")
+        return []
+
 #old one
 def fetch_nse_data():
     """Fetch data from NSE API using cloudscraper with dynamic session management"""
@@ -380,6 +451,17 @@ def fetch_nse_data():
         
         if response.status_code == 200:
             data = json.loads(decoded)
+            
+            # Store data in SQLite database asynchronously
+            fetch_time = datetime.now()
+            processing_start = time.time()
+            
+            # Calculate processing time (minimal since we're doing async storage)
+            processing_time_ms = int((time.time() - processing_start) * 1000)
+            
+            # Store in database asynchronously
+            store_oi_data_async(data, fetch_time, processing_time_ms, st.session_state.get('db_storage_enabled', True))
+            
             return data, None
         else:
             return None, f"HTTP Error: {response.status_code}"
@@ -1156,7 +1238,271 @@ def show_stock_detail_page():
         else:
             st.error(f"No secid found for {st.session_state.selected_stock_symbol} in July 2025 futures")
 
+def show_historical_data_view():
+    """Show historical data analysis page"""
+    st.title("📊 Historical OI Spurts Data Analysis")
+    
+    # Back button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if st.button("← Back to Live Dashboard", type="primary"):
+            st.session_state.show_historical_view = False
+            st.rerun()
+    
+    with col2:
+        st.markdown("### Historical Data Explorer")
+    
+    with col3:
+        # Refresh database stats
+        if st.button("🔄 Refresh Stats", type="secondary"):
+            update_database_stats()
+            st.rerun()
+    
+    st.markdown("---")
+    
+    # Database statistics
+    if st.session_state.db_stats:
+        stats = st.session_state.db_stats
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Snapshots", stats.get('total_snapshots', 0))
+        with col2:
+            st.metric("Stock Records", stats.get('total_stock_records', 0))
+        with col3:
+            st.metric("Database Size", f"{stats.get('database_size_mb', 0)} MB")
+        with col4:
+            if stats.get('earliest_data') and stats.get('latest_data'):
+                earliest = datetime.fromisoformat(stats['earliest_data']).strftime('%m/%d')
+                latest = datetime.fromisoformat(stats['latest_data']).strftime('%m/%d')
+                st.metric("Data Range", f"{earliest} - {latest}")
+    
+    # Tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Intraday Timeline", "🎯 Specific Time Lookup", "⚡ Peak Activity", "📋 Data Export"])
+    
+    with tab1:
+        st.subheader("Intraday Stock Count Timeline")
+        
+        # Date selector
+        selected_date = st.date_input(
+            "Select Date for Timeline",
+            value=datetime.now().date(),
+            max_value=datetime.now().date()
+        )
+        
+        if st.button("Load Timeline", type="primary"):
+            with st.spinner("Loading timeline data..."):
+                timeline_data = get_intraday_timeline_data(datetime.combine(selected_date, datetime.min.time()))
+                
+                if timeline_data:
+                    # Convert to DataFrame for plotting
+                    timeline_df = pd.DataFrame(timeline_data)
+                    timeline_df['time'] = pd.to_datetime(timeline_df['time'])
+                    timeline_df['time_str'] = timeline_df['time'].dt.strftime('%H:%M')
+                    
+                    # Plot timeline
+                    fig = px.line(
+                        timeline_df,
+                        x='time_str',
+                        y='total_stocks',
+                        title=f"Stock Count Timeline for {selected_date}",
+                        labels={'time_str': 'Time', 'total_stocks': 'Number of Stocks'},
+                        markers=True
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show data table
+                    st.subheader("Timeline Data")
+                    display_df = timeline_df[['time_str', 'total_stocks']].copy()
+                    display_df.columns = ['Time', 'Stock Count']
+                    st.dataframe(display_df, use_container_width=True)
+                    
+                    # Summary statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Max Stocks", timeline_df['total_stocks'].max())
+                    with col2:
+                        st.metric("Min Stocks", timeline_df['total_stocks'].min())
+                    with col3:
+                        st.metric("Avg Stocks", f"{timeline_df['total_stocks'].mean():.1f}")
+                    with col4:
+                        peak_time = timeline_df.loc[timeline_df['total_stocks'].idxmax(), 'time_str']
+                        st.metric("Peak Time", peak_time)
+                else:
+                    st.info(f"No data available for {selected_date}")
+    
+    with tab2:
+        st.subheader("Specific Time Lookup")
+        st.write("Find out exactly what stocks were in OI spurts at a specific time")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            lookup_date = st.date_input(
+                "Select Date",
+                value=datetime.now().date(),
+                max_value=datetime.now().date(),
+                key="lookup_date"
+            )
+        
+        with col2:
+            lookup_time = st.time_input(
+                "Select Time",
+                value=datetime.now().time(),
+                key="lookup_time"
+            )
+        
+        if st.button("🔍 Lookup Data", type="primary"):
+            target_datetime = datetime.combine(lookup_date, lookup_time)
+            
+            with st.spinner(f"Looking up data for {target_datetime.strftime('%Y-%m-%d %H:%M')}..."):
+                df, snapshot_data = get_historical_snapshot(target_datetime)
+                
+                if not df.empty and snapshot_data:
+                    st.success(f"Found data closest to {target_datetime.strftime('%H:%M')}")
+                    
+                    # Show snapshot info
+                    actual_time = datetime.fromisoformat(snapshot_data['snapshot_time']).strftime('%H:%M:%S')
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Actual Time", actual_time)
+                    with col2:
+                        st.metric("Total Stocks", snapshot_data['total_stocks'])
+                    with col3:
+                        time_diff = abs((target_datetime - datetime.fromisoformat(snapshot_data['snapshot_time'])).total_seconds())
+                        st.metric("Time Difference", f"{time_diff:.0f}s")
+                    
+                    # Show stocks data
+                    st.subheader(f"Stocks in OI Spurts at {actual_time}")
+                    st.dataframe(df, use_container_width=True, height=400)
+                    
+                else:
+                    st.warning(f"No data found near {target_datetime.strftime('%Y-%m-%d %H:%M')}")
+    
+    with tab3:
+        st.subheader("Peak Activity Analysis")
+        st.write("Find times with highest stock counts")
+        
+        peak_date = st.date_input(
+            "Select Date for Peak Analysis",
+            value=datetime.now().date(),
+            max_value=datetime.now().date(),
+            key="peak_date"
+        )
+        
+        peak_limit = st.slider("Number of peak times to show", 5, 20, 10)
+        
+        if st.button("🔍 Find Peak Times", type="primary"):
+            with st.spinner("Analyzing peak activity..."):
+                peaks_data = get_peak_activity_data(datetime.combine(peak_date, datetime.min.time()), peak_limit)
+                
+                if peaks_data:
+                    # Convert to DataFrame
+                    peaks_df = pd.DataFrame(peaks_data)
+                    peaks_df['time'] = pd.to_datetime(peaks_df['time'])
+                    peaks_df['time_str'] = peaks_df['time'].dt.strftime('%H:%M:%S')
+                    
+                    # Show chart
+                    fig = px.bar(
+                        peaks_df,
+                        x='time_str',
+                        y='total_stocks',
+                        title=f"Peak Activity Times for {peak_date}",
+                        labels={'time_str': 'Time', 'total_stocks': 'Number of Stocks'}
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show data table
+                    st.subheader("Peak Activity Times")
+                    display_df = peaks_df[['time_str', 'total_stocks']].copy()
+                    display_df.columns = ['Time', 'Stock Count']
+                    st.dataframe(display_df, use_container_width=True)
+                    
+                else:
+                    st.info(f"No peak activity data available for {peak_date}")
+    
+    with tab4:
+        st.subheader("Data Export")
+        st.write("Export historical data for external analysis")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            export_start_date = st.date_input(
+                "Start Date",
+                value=datetime.now().date() - timedelta(days=7),
+                max_value=datetime.now().date(),
+                key="export_start"
+            )
+        
+        with col2:
+            export_end_date = st.date_input(
+                "End Date",
+                value=datetime.now().date(),
+                max_value=datetime.now().date(),
+                key="export_end"
+            )
+        
+        if st.button("📊 Generate Export Data", type="primary"):
+            if export_start_date <= export_end_date:
+                with st.spinner("Generating export data..."):
+                    # Get timeline data for the date range
+                    all_timeline_data = []
+                    current_date = export_start_date
+                    
+                    while current_date <= export_end_date:
+                        daily_timeline = get_intraday_timeline_data(datetime.combine(current_date, datetime.min.time()))
+                        all_timeline_data.extend(daily_timeline)
+                        current_date += timedelta(days=1)
+                    
+                    if all_timeline_data:
+                        export_df = pd.DataFrame(all_timeline_data)
+                        export_df['date'] = pd.to_datetime(export_df['time']).dt.date
+                        export_df['time_only'] = pd.to_datetime(export_df['time']).dt.strftime('%H:%M:%S')
+                        
+                        # Show summary
+                        st.success(f"Generated {len(export_df)} data points")
+                        
+                        # Display sample data
+                        st.subheader("Sample Export Data")
+                        st.dataframe(export_df.head(10), use_container_width=True)
+                        
+                        # Download button
+                        csv_data = export_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download CSV",
+                            data=csv_data,
+                            file_name=f"oi_spurts_data_{export_start_date}_to_{export_end_date}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("No data available for the selected date range")
+            else:
+                st.error("Start date must be before or equal to end date")
+
 def main():
+    # Initialize database stats on first run
+    if not st.session_state.get('db_stats'):
+        try:
+            update_database_stats()
+        except Exception as e:
+            st.error(f"Database initialization error: {e}")
+    
+    # Update database stats periodically (every 10th page load)
+    if hasattr(st.session_state, 'page_load_count'):
+        st.session_state.page_load_count += 1
+    else:
+        st.session_state.page_load_count = 1
+    
+    if st.session_state.page_load_count % 10 == 0:
+        update_database_stats()
+    
+    # Check if we should show historical data view
+    if st.session_state.show_historical_view:
+        show_historical_data_view()
+        return
+    
     # Check if we should show stock detail page
     if st.session_state.show_stock_detail_page and st.session_state.selected_stock_symbol:
         show_stock_detail_page()
@@ -1257,6 +1603,47 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Current Section:** {st.session_state.selected_section}")
     
+    # Database Controls Section
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**📊 Historical Data Controls**")
+    
+    # Database status
+    if st.session_state.db_stats:
+        stats = st.session_state.db_stats
+        st.sidebar.metric("Total Snapshots", stats.get('total_snapshots', 0))
+        st.sidebar.metric("DB Size (MB)", stats.get('database_size_mb', 0))
+    
+    # Database toggle
+    db_enabled = st.sidebar.checkbox(
+        "Enable Database Storage", 
+        value=st.session_state.db_storage_enabled,
+        help="Store OI data in SQLite for historical analysis"
+    )
+    st.session_state.db_storage_enabled = db_enabled
+    
+    # Historical data viewer
+    if st.sidebar.button("📈 View Historical Data", use_container_width=True):
+        st.session_state.show_historical_view = True
+        st.rerun()
+    
+    # Database maintenance
+    if st.sidebar.button("🧹 Cleanup Old Data", use_container_width=True, help="Remove data older than 30 days"):
+        with st.sidebar:
+            with st.spinner("Cleaning up old data..."):
+                try:
+                    oi_db.cleanup_old_data(30)
+                    update_database_stats()
+                    success_placeholder = st.empty()
+                    success_placeholder.success("✅ Cleanup completed!")
+                    time.sleep(2)
+                    success_placeholder.empty()
+                except Exception as e:
+                    error_placeholder = st.empty()
+                    error_placeholder.error(f"Cleanup failed: {e}")
+                    time.sleep(3)
+                    error_placeholder.empty()
+        st.rerun()
+    
     # Session status information
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Session Status:**")
@@ -1318,7 +1705,10 @@ def main():
                 st.error(f"Error fetching data: {error}")
                 status_placeholder.error("❌ Failed")
             else:
-                status_placeholder.success("✅ Success")
+                if st.session_state.db_storage_enabled:
+                    status_placeholder.success("✅ Success (Stored in DB)")
+                else:
+                    status_placeholder.success("✅ Success")
                 st.session_state.last_update = datetime.now()
                 
                 # Process and display data
@@ -1340,7 +1730,10 @@ def main():
                         if len(df) > 0:
                             symbols_placeholder.metric("Symbols", len(df))
                             current_time = datetime.now().strftime("%H:%M:%S")
-                            updated_placeholder.metric("Updated", current_time)
+                            if st.session_state.db_storage_enabled:
+                                updated_placeholder.metric("Updated", f"{current_time} 💾")
+                            else:
+                                updated_placeholder.metric("Updated", current_time)
                         
                         # Display current data
                         with data_placeholder.container():
